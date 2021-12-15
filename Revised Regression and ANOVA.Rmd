@@ -5,20 +5,42 @@ output: html_notebook
 
 
 ```{r load-packages-data}
-library(readxl)
-library(tidyverse)
-library(broom)
+library(readxl) # tidy import of xlsx
+library(tidyverse) # dplyr, magrittr
+library(broom) # tidy()
 
 mass_2019 <- read_excel(here::here("data_mass_only_from_2019_folder.xlsx"),
-                        sheet = "mass balances")
+                        sheet = "mass balances")  %>%
+  select(-c(...2, ...3)) %>%
+  drop_na(...1) %>%
+  mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl1", 6), rep("pbl2", 6))) %>%
+  rename(blooms_level = `...1`) %>%
+  pivot_longer(cols = where(is.numeric),
+               names_to = "student_id",
+               values_to = "rating") %>%
+  mutate(domain = "mass")
+
 kinetics_2019 <- read_excel(here::here("data_kinetics_from_2019_folder.xlsx"),
                            sheet = "kinetics") %>%
   select(-c(...2, ...3)) %>%
   drop_na(...1) %>%
-  mutate(task = c(rep("Lec", 6), rep("ICP", 6), rep("HW", 6), rep("PBL1", 6), rep("PBL2", 6)))
+  slice_head(n = 24) %>% # remove irrelevant PBL1 data
+  mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl2", 6))) %>%
+  rename(blooms_level = `...1`) %>%
+  pivot_longer(cols = where(is.numeric),
+               names_to = "student_id",
+               values_to = "rating") %>%
+  mutate(domain = "kinetics")
+
+combined_2019 <-bind_rows(mass_2019,
+                           kinetics_2019)
+
+helper_letters <- c(letters, paste0(letters, letters))
 
 mass_2020 <- read_excel(here::here("combined_2020.xlsx"),
-                            sheet = "Mass")
+                            sheet = "Mass") %>%
+  rename(task = Lecture,
+         letters c(`...2`, `...49`)) %>%
 kinetics_2020 <- read_excel(here::here("combined_2020.xlsx"),
                             sheet = "Kinetics")
 
