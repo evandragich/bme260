@@ -1,0 +1,27 @@
+---
+title: "Revised Regression and ANOVA Analysis"
+output: html_notebook
+---
+
+
+```{r load-packages-data}
+library(readxl)
+library(tidyverse)
+library(broom)
+
+mass_2019 <- read_excel(here::here("data_mass_only_from_2019_folder.xlsx"),
+                        sheet = "mass balances")
+kinetics_2019 <- read_excel(here::here("data_kinetics_from_2019_folder.xlsx"),
+                           sheet = "kinetics") %>%
+  select(-c(...2, ...3)) %>%
+  drop_na(...1) %>%
+  mutate(task = c(rep("Lec", 6), rep("ICP", 6), rep("HW", 6), rep("PBL1", 6), rep("PBL2", 6)))
+
+mass_2020 <- read_excel(here::here("combined_2020.xlsx"),
+                            sheet = "Mass")
+kinetics_2020 <- read_excel(here::here("combined_2020.xlsx"),
+                            sheet = "Kinetics")
+
+```
+
+
