@@ -10,10 +10,10 @@ output:
 ```{r load-packages-data, message = FALSE}
 library(readxl) # tidy import of xlsx
 library(tidyverse) # dplyr, magrittr
-library(broom) # tidy()
 library(lme4) # lmer() (linear mixed models)
-library(lmerTest) # augment lmer() output with p-values
-library(multcomp) # lmer() post hoc comparisons
+library(lmerTest) # lmer() anova
+library(emmeans) # lmer() post hoc comparisons
+#library(kable) # nicely printed tables
 
 
 # clean individual datasets into tidy format
@@ -104,16 +104,16 @@ mass <- rbind(mass_2019, mass_2020) %>%
     task = factor(task, levels = c("lec", "icp", "hw", "pbl1", "pbl2"))
   )
 
-# gather student_ids of any students with NAs (ANOVA wont tolerate this).
-mass_to_remove <- mass %>%
-  filter(is.na(rating)) %>%
-  dplyr::select(student_id) %>%
-  pull()
-
-# filter out all observations from said student ids
-mass <- mass %>%
-  filter(!(student_id %in% mass_to_remove)) %>%
-  mutate(student_id = fct_drop(student_id))
+# # gather student_ids of any students with NAs (ANOVA wont tolerate this).
+# mass_to_remove <- mass %>%
+#   filter(is.na(rating)) %>%
+#   dplyr::select(student_id) %>%
+#   pull()
+# 
+# # filter out all observations from said student ids
+# mass <- mass %>%
+#   filter(!(student_id %in% mass_to_remove)) %>%
+#   mutate(student_id = fct_drop(student_id))
 
 kinetics <- rbind(kinetics_2019, kinetics_2020) %>%
   mutate(
@@ -124,35 +124,44 @@ kinetics <- rbind(kinetics_2019, kinetics_2020) %>%
   )
 ```
 
-# Exploratory Two-way Repeated Measures ANOVA
-See [this](https://statistics.laerd.com/spss-tutorials/two-way-repeated-measures-anova-using-spss-statistics.php) link for more information on why I think this is the best route to proceed.
+# Motivation for a new statistical method
 
-## Five Assumptions
+My personal biggest concern with our methods, even before receiving reviewer comments, was the blatant violation of the [independence condition](https://statistics.laerd.com/spss-tutorials/multiple-regression-using-spss-statistics.php) for standard linear regression. I *knew* there was an alternative--something that could account for the repeated measures, or "nesting" of `blooms_level * task` within each student.
 
-#### 1. Dependent variable is continuous
+During my search, I finally found it-- [a two-way repeated measures ANOVA](https://statistics.laerd.com/spss-tutorials/two-way-repeated-measures-anova-using-spss-statistics.php). This page has good vignettes for sample scenarios, which you can draw analogies to our data structure.
 
-Satisfied; we initially justified treating the same Likert data as continuous with literature support and no reviewers had problems.
+I tried to find out how to implement it, and ran into [recent literature](https://www.r-bloggers.com/2018/04/how-to-do-repeated-measures-anovas-in-r/) eschewing ANOVA in favor of regression. This page also pointed me to the family of linear mixed models, which extend simple linear regression by allowing for random effects, in addtion to fixed.
 
-#### 2. Both factors consist of matched pairs/sets
+Random effects control for the repeated measures factor, by essentially allowing factors to vary along `student_id` without using up degrees of freedom to try to make sense of the results. In other words, `student_id` is a random effect in our case because we have to account for each student having a different, random intercept, before examining the global, fixed effects of `task` and `blooms_level`.
 
-Satisfied; this is exactly our data--each student completed all six levels of one factor (`blooms_level`) and also completed all four or five levels of another (`task`).
-
-#### 3. No significant outliers
-
-Satisfied; all values are literally 1-5.
-
-#### 4. Approximately normally distributed dependent variable (for each combination of factors)
+The `(1 | year/student_id)` term in these models indicates that we have to account for the random, nuisance variance caused by each student and each year/cohort before examining the effects of `blooms_level`, `task`, and their interaction. Specifically, the `/` nesting operator means that we have a first random intercept to account for variance across years, and after accounting for this variance we introduce a random intercept to further account for that particular student's variance.
 
 
-```{r mass-aov}
-mass_aov <- aov(rating ~ blooms_level * task + year + Error(student_id), data = mass)
+```{r mass-lmm}
+mass_lmm <- lmer(rating ~ blooms_level * task + (1 | year/student_id), data = mass)
 
-summary(mass_aov)
 
-mass_lmm <- lmer(rating ~ blooms_level * task + year + (1 | student_id), data = mass)
-
-anova(mass_lmm)
-
-summary(mass_lmm)$coefficients
+anova(mass_lmm) %>%
+  tidy()
 ```
 
+Great! Significant main effects for `task` and `blooms_level`, as well as their interaction. The next step is to break this down into pairwise comparisons. I chose to analyze pairs of `blooms_level` within each `task`; this is most analogous to our former method.
+
+``` {r mass-emmeans}
+#emmeans(mass_lmm, pairwise ~ blooms_level | task)
+
+mass_emm <- ref_grid(mass_lmm) %>%
+  emmeans(specs = pairwise ~ task:blooms_level)
+
+tidy(mass_emm$emmeans)
+mass_emm$contrasts %>%
+  summary(infer = TRUE) %>%
+tidy()
+```
+
+```{r kinetics-lmm}
+kinetics_lmm <- lmer(rating ~ blooms_level * task + (1 | year/student_id), data = kinetics)
+
+anova(kinetics_lmm)
+summary(kinetics_lmm)$coefficients
+```
