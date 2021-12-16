@@ -1,13 +1,25 @@
 ---
 title: "Revised Regression"
+author: "Evan Dragich"
+date: "Last compiled on `r Sys.Date()`"
 output:
+  pdf_document: default
   html_document:
     df_print: paged
+urlcolor: blue
 ---
+
+```{r include = FALSE}
+knitr::opts_chunk$set(warning = FALSE,
+                      message = FALSE)
+```
+
 
 # Data Cleaning
 
-```{r load-packages-data, message = FALSE}
+Check out the .Rmd file for full code (omitted here for brevity).
+
+```{r load-packages-data, echo = FALSE}
 library(readxl) # tidy import of xlsx
 library(tidyverse) # dplyr, magrittr
 library(broom) # tidy
@@ -94,52 +106,49 @@ kinetics_2020 <- kinetics_2020 %>%
 
 ```
 
-```{r combine-years}
+```{r combine-years, echo = FALSE}
 # create final dataframes for each domain
 mass <- rbind(mass_2019, mass_2020) %>%
   mutate(
     student_id = as.factor(student_id),
     year = factor(year),
-    blooms_level = factor(blooms_level, levels = c("remember", "understand", "analyze", "apply", "evaluate", "create")),
+    blooms_level = factor(blooms_level, 
+                          levels = c("remember", "understand", "analyze", 
+                                     "apply", "evaluate", "create")),
     task = factor(task, levels = c("lec", "icp", "hw", "pbl"))
   )
-
-# # gather student_ids of any students with NAs (ANOVA wont tolerate this).
-# mass_to_remove <- mass %>%
-#   filter(is.na(rating)) %>%
-#   dplyr::select(student_id) %>%
-#   pull()
-# 
-# # filter out all observations from said student ids
-# mass <- mass %>%
-#   filter(!(student_id %in% mass_to_remove)) %>%
-#   mutate(student_id = fct_drop(student_id))
 
 kinetics <- rbind(kinetics_2019, kinetics_2020) %>%
   mutate(
     student_id = factor(student_id),
     year = factor(year),
-    blooms_level = factor(blooms_level, levels = c("remember", "understand", "analyze", "apply", "evaluate", "create")),
+    blooms_level = factor(blooms_level, 
+                          levels = c("remember", "understand", "analyze", 
+                                     "apply", "evaluate", "create")),
     task = factor(task, levels = c("lec", "icp", "hw", "pbl"))
   )
 ```
 
 # Motivation for a new statistical method
 
-My personal biggest concern with our methods, even before receiving reviewer comments, was the blatant violation of the [independence condition](https://statistics.laerd.com/spss-tutorials/multiple-regression-using-spss-statistics.php) for standard linear regression. I *knew* there was an alternative--something that could account for the repeated measures, or "nesting" of `blooms_level * task` within each student.
+My personal biggest concern with our methods, even before receiving reviewer comments, was the blatant violation of the [independence condition](https://statistics.laerd.com/spss-tutorials/multiple-regression-using-spss-statistics.php) for standard linear regression. I **knew** there was an alternative--something that could account for the repeated measures, or "nesting" of `blooms_level * task` within each student.
 
 During my search, I finally found it-- [a two-way repeated measures ANOVA](https://statistics.laerd.com/spss-tutorials/two-way-repeated-measures-anova-using-spss-statistics.php). This page has good vignettes for sample scenarios, which you can draw analogies to our data structure.
 
 I tried to find out how to implement it, and ran into [recent literature](https://www.r-bloggers.com/2018/04/how-to-do-repeated-measures-anovas-in-r/) eschewing ANOVA in favor of regression. This page also pointed me to the family of linear mixed models, which extend simple linear regression by allowing for random effects, in addtion to fixed.
 
+## Random Effects
+
 Random effects control for the repeated measures factor, by essentially allowing factors to vary along `student_id` without using up degrees of freedom to try to make sense of the results. In other words, `student_id` is a random effect in our case because we have to account for each student having a different, random intercept, before examining the global, fixed effects of `task` and `blooms_level`.
 
 The `(1 | year/student_id)` term in these models indicates that we have to account for the random, nuisance variance caused by each student and each year/cohort before examining the effects of `blooms_level`, `task`, and their interaction. Specifically, the `/` nesting operator means that we have a first random intercept to account for variance across years, and after accounting for this variance we introduce a random intercept to further account for that particular student's variance.
 
+# Mass Analysis
+
+## Omnibus ANOVA
 
 ```{r mass-lmm}
 mass_lmm <- lmer(rating ~ blooms_level * task + (1 | year/student_id), data = mass)
-
 
 anova(mass_lmm) %>%
   tidy()
@@ -147,9 +156,9 @@ anova(mass_lmm) %>%
 
 Great! Significant main effects for `task` and `blooms_level`, as well as their interaction. The next step is to break this down into pairwise comparisons. I chose to analyze pairs of `blooms_level` within each `task`; this is most analogous to our former method.
 
-``` {r mass-emmeans}
-#emmeans(mass_lmm, pairwise ~ blooms_level | task)
+## Marginal Means and Contrasts
 
+``` {r mass-emmeans}
 mass_emm <- ref_grid(mass_lmm) %>%
   emmeans(specs = pairwise ~ blooms_level | task)
 
@@ -160,16 +169,46 @@ mass_emm$contrasts %>%
 
 (Surprisingly, there don't exist any simple packages to transform this output into a neater table--I think we'd have to do it ourselves.)
 
-The first table is the [marginal means](https://www.theanalysisfactor.com/why-report-estimated-marginal-means-in-spss-glm/), which enhances bare-bones descriptive statistics by accounting for imbalances in data. This is huge, because our mass data has double the `pbl` observations of the other categories. This method also helps with the imbalance from missing data, but that is a trivial concern compared to the double-PBL issue.
+The first table is the estimated marginal means [(EMM)](https://www.theanalysisfactor.com/why-report-estimated-marginal-means-in-spss-glm/), which enhances bare-bones descriptive statistics by accounting for imbalances in data. This is huge, because our mass data has double the `pbl` observations of the other categories. This method also helps with the imbalance from missing data, but that is a trivial concern compared to the double-PBL issue.
 
-The second table output contains the pairwise contrasts between each level for a particular task, with the $\alpha$ = 0.05 p-value, associated 95% confidence interval, and Tukey familywise adjustment.
+The second table output contains the pairwise contrasts between each level for a particular task, with the $\alpha$ = 0.05 p-value, associated 95% confidence interval, and Tukey family-wise adjustment.
 
-This is messier than our previous output, but displays similar effects which lead to similar interpretations. It isn't nearly as parsimonious as "these 3 coefficients are negative, but PBL is the only positive one!" However, examine the `lec` contrasts and you can see ample compr
+## My Thoughts
 
+This is messier than our previous output, but displays similar effects which lead to similar interpretations. It isn't nearly as parsimonious as "these 3 coefficients are negative, but PBL is the only positive one!" However, examine the `lec` contrasts and you can see ample comparisons which estimate `Remember` and `Understand` well below the higher levels, with significance. Conversely, these same comparisons have negative estimated effects for `pbl`, indicating a significant difference in the opposite direction. Middle Bloom's Levels are hazier to tease apart, as they were before, but you can see the clear stratification between `lec` `->` `hw/icp` `->` `pbl`, in my opinion.
+
+# Kinetics Analysis
+
+## Omnibus ANOVA
+
+Here is the same procedure for kinetics. Starting with model fitting and the omnibus ANOVA:
 
 ```{r kinetics-lmm}
 kinetics_lmm <- lmer(rating ~ blooms_level * task + (1 | year/student_id), data = kinetics)
 
-anova(kinetics_lmm)
-summary(kinetics_lmm)$coefficients
+anova(kinetics_lmm) %>%
+  tidy()
 ```
+
+## Estimated Marginal Means and Contrasts
+
+``` {r kinetics-emmeans}
+kinetics_emm <- ref_grid(kinetics_lmm) %>%
+  emmeans(specs = pairwise ~ blooms_level | task)
+
+tidy(kinetics_emm$emmeans)
+kinetics_emm$contrasts %>%
+  summary(infer = TRUE)
+```
+
+## My thoughts
+
+Very analogous results again. `pbl` in particular **definitely** doesn't look as pretty as our original output.
+
+But, I think we can interpret each of these significant pairwise comparisons in a much more statistically sound way, which will please reviewers.
+
+# Assumptions for this mixed model
+
+Final points: assumptions. This [paper](https://besjournals.onlinelibrary.wiley.com/doi/10.1111/2041-210X.13434) points out that even blatant violations are mostly fine, with the caveats of (1) no bimodial distributions and (2) noticeable skew and heteroscedasticity (which we have much of if I remember correctly) can lead to imprecise estimates. This is reflected in many wide confidence intervals in our data, and is an effect of both potential underlying skew/heteroscedasticity, but also more simply the Likert nature of our data.
+
+I'll have more robust assumptions work added soon, but this is a great initial proof of concept and starting point for revisions.
