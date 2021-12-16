@@ -1,5 +1,5 @@
 ---
-title: "Revised Regression and ANOVA"
+title: "Revised Regression"
 output:
   html_document:
     df_print: paged
@@ -10,10 +10,10 @@ output:
 ```{r load-packages-data, message = FALSE}
 library(readxl) # tidy import of xlsx
 library(tidyverse) # dplyr, magrittr
+library(broom) # tidy
 library(lme4) # lmer() (linear mixed models)
 library(lmerTest) # lmer() anova
 library(emmeans) # lmer() post hoc comparisons
-#library(kable) # nicely printed tables
 
 
 # clean individual datasets into tidy format
@@ -22,7 +22,7 @@ mass_2019 <- read_excel(here::here("data_mass_only_from_2019_folder.xlsx"),
 ) %>%
   dplyr::select(-c(...2, ...3)) %>%
   drop_na(...1) %>%
-  mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl1", 6), rep("pbl2", 6))) %>%
+  mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl", 12))) %>%
   rename(blooms_level = `...1`) %>%
   pivot_longer(
     cols = where(is.numeric),
@@ -40,7 +40,7 @@ kinetics_2019 <- read_excel(here::here("data_kinetics_from_2019_folder.xlsx"),
   dplyr::select(-c(...2, ...3)) %>%
   drop_na(...1) %>%
   slice_head(n = 24) %>% # remove irrelevant PBL1 data
-  mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl2", 6))) %>%
+  mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl", 6))) %>%
   rename(blooms_level = `...1`) %>%
   pivot_longer(
     cols = where(is.numeric),
@@ -65,7 +65,7 @@ names(mass_2020) <- c("blooms_level", helper_letters)
 
 mass_2020 <- mass_2020 %>%
   drop_na(A) %>%
-  mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl1", 6), rep("pbl2", 6))) %>%
+  mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl", 12))) %>%
   pivot_longer(
     cols = where(is.numeric),
     names_to = "student_id",
@@ -83,7 +83,7 @@ names(kinetics_2020) <- c("blooms_level", helper_letters)
 kinetics_2020 <- kinetics_2020 %>%
   drop_na(A) %>%
   slice(c(1:18, 25:30)) %>% # remove irrelevant PBL1 data
-  mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl2", 6))) %>%
+  mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl", 6))) %>%
   pivot_longer(
     cols = where(is.numeric),
     names_to = "student_id",
@@ -101,7 +101,7 @@ mass <- rbind(mass_2019, mass_2020) %>%
     student_id = as.factor(student_id),
     year = factor(year),
     blooms_level = factor(blooms_level, levels = c("remember", "understand", "analyze", "apply", "evaluate", "create")),
-    task = factor(task, levels = c("lec", "icp", "hw", "pbl1", "pbl2"))
+    task = factor(task, levels = c("lec", "icp", "hw", "pbl"))
   )
 
 # # gather student_ids of any students with NAs (ANOVA wont tolerate this).
@@ -120,7 +120,7 @@ kinetics <- rbind(kinetics_2019, kinetics_2020) %>%
     student_id = factor(student_id),
     year = factor(year),
     blooms_level = factor(blooms_level, levels = c("remember", "understand", "analyze", "apply", "evaluate", "create")),
-    task = factor(task, levels = c("lec", "icp", "hw", "pbl2"))
+    task = factor(task, levels = c("lec", "icp", "hw", "pbl"))
   )
 ```
 
@@ -151,13 +151,21 @@ Great! Significant main effects for `task` and `blooms_level`, as well as their 
 #emmeans(mass_lmm, pairwise ~ blooms_level | task)
 
 mass_emm <- ref_grid(mass_lmm) %>%
-  emmeans(specs = pairwise ~ task:blooms_level)
+  emmeans(specs = pairwise ~ blooms_level | task)
 
 tidy(mass_emm$emmeans)
 mass_emm$contrasts %>%
-  summary(infer = TRUE) %>%
-tidy()
+  summary(infer = TRUE)
 ```
+
+(Surprisingly, there don't exist any simple packages to transform this output into a neater table--I think we'd have to do it ourselves.)
+
+The first table is the [marginal means](https://www.theanalysisfactor.com/why-report-estimated-marginal-means-in-spss-glm/), which enhances bare-bones descriptive statistics by accounting for imbalances in data. This is huge, because our mass data has double the `pbl` observations of the other categories. This method also helps with the imbalance from missing data, but that is a trivial concern compared to the double-PBL issue.
+
+The second table output contains the pairwise contrasts between each level for a particular task, with the $\alpha$ = 0.05 p-value, associated 95% confidence interval, and Tukey familywise adjustment.
+
+This is messier than our previous output, but displays similar effects which lead to similar interpretations. It isn't nearly as parsimonious as "these 3 coefficients are negative, but PBL is the only positive one!" However, examine the `lec` contrasts and you can see ample compr
+
 
 ```{r kinetics-lmm}
 kinetics_lmm <- lmer(rating ~ blooms_level * task + (1 | year/student_id), data = kinetics)
