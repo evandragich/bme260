@@ -11,72 +11,120 @@ output:
 library(readxl) # tidy import of xlsx
 library(tidyverse) # dplyr, magrittr
 library(broom) # tidy()
+library(lme4) # lmer() (linear mixed models)
+library(lmerTest) # augment lmer() output with p-values
+library(multcomp) # lmer() post hoc comparisons
 
 
 # clean individual datasets into tidy format
 mass_2019 <- read_excel(here::here("data_mass_only_from_2019_folder.xlsx"),
-                        sheet = "mass balances")  %>%
-  select(-c(...2, ...3)) %>%
+  sheet = "mass balances"
+) %>%
+  dplyr::select(-c(...2, ...3)) %>%
   drop_na(...1) %>%
   mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl1", 6), rep("pbl2", 6))) %>%
   rename(blooms_level = `...1`) %>%
-  pivot_longer(cols = where(is.numeric),
-               names_to = "student_id",
-               values_to = "rating") %>%
-  mutate(year = "2019")
+  pivot_longer(
+    cols = where(is.numeric),
+    names_to = "student_id",
+    values_to = "rating"
+  ) %>%
+  mutate(
+    year = "2019",
+    student_id = str_to_lower(student_id)
+  ) # 2019 student ids will be lowercase; 2020 uppercase
 
 kinetics_2019 <- read_excel(here::here("data_kinetics_from_2019_folder.xlsx"),
-                           sheet = "kinetics") %>%
-  select(-c(...2, ...3)) %>%
+  sheet = "kinetics"
+) %>%
+  dplyr::select(-c(...2, ...3)) %>%
   drop_na(...1) %>%
   slice_head(n = 24) %>% # remove irrelevant PBL1 data
   mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl2", 6))) %>%
   rename(blooms_level = `...1`) %>%
-  pivot_longer(cols = where(is.numeric),
-               names_to = "student_id",
-               values_to = "rating") %>%
-  mutate(year = "2019")
+  pivot_longer(
+    cols = where(is.numeric),
+    names_to = "student_id",
+    values_to = "rating"
+  ) %>%
+  mutate(
+    year = "2019",
+    student_id = str_to_lower(student_id)
+  )
 
 # 2020 didnt come with student id letter codes, so I'm making them here
-helper_letters <- c(letters, paste0(letters, letters)) %>%
+# same sequence as 2019, but all caps to distinguish
+helper_letters <- c(LETTERS, paste0(LETTERS, LETTERS)) %>%
   .[1:48]
 
 mass_2020 <- read_excel(here::here("combined_2020.xlsx"),
-                            sheet = "Mass")
+  sheet = "Mass"
+)
 
 names(mass_2020) <- c("blooms_level", helper_letters)
 
 mass_2020 <- mass_2020 %>%
-  drop_na(a) %>%
+  drop_na(A) %>%
   mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl1", 6), rep("pbl2", 6))) %>%
-  pivot_longer(cols = where(is.numeric),
-               names_to = "student_id",
-               values_to = "rating") %>%
-  mutate(year = "2020")
+  pivot_longer(
+    cols = where(is.numeric),
+    names_to = "student_id",
+    values_to = "rating"
+  ) %>%
+  mutate(year = "2020",
+         blooms_level = str_to_lower(blooms_level))
 
 kinetics_2020 <- read_excel(here::here("combined_2020.xlsx"),
-                            sheet = "Kinetics")
+  sheet = "Kinetics"
+)
 
 names(kinetics_2020) <- c("blooms_level", helper_letters)
 
 kinetics_2020 <- kinetics_2020 %>%
-  drop_na(a) %>%
+  drop_na(A) %>%
   slice(c(1:18, 25:30)) %>% # remove irrelevant PBL1 data
   mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl2", 6))) %>%
-  pivot_longer(cols = where(is.numeric),
-               names_to = "student_id",
-               values_to = "rating") %>%
-  mutate(year = "2020")
+  pivot_longer(
+    cols = where(is.numeric),
+    names_to = "student_id",
+    values_to = "rating"
+  ) %>%
+  mutate(year = "2020",
+         blooms_level = str_to_lower(blooms_level))
 
 ```
 
 ```{r combine-years}
 # create final dataframes for each domain
-mass <- rbind(mass_2019, mass_2020)
-kinetics <- rbind(kinetics_2019, kinetics_2020)
+mass <- rbind(mass_2019, mass_2020) %>%
+  mutate(
+    student_id = as.factor(student_id),
+    year = factor(year),
+    blooms_level = factor(blooms_level, levels = c("remember", "understand", "analyze", "apply", "evaluate", "create")),
+    task = factor(task, levels = c("lec", "icp", "hw", "pbl1", "pbl2"))
+  )
+
+# gather student_ids of any students with NAs (ANOVA wont tolerate this).
+mass_to_remove <- mass %>%
+  filter(is.na(rating)) %>%
+  dplyr::select(student_id) %>%
+  pull()
+
+# filter out all observations from said student ids
+mass <- mass %>%
+  filter(!(student_id %in% mass_to_remove)) %>%
+  mutate(student_id = fct_drop(student_id))
+
+kinetics <- rbind(kinetics_2019, kinetics_2020) %>%
+  mutate(
+    student_id = factor(student_id),
+    year = factor(year),
+    blooms_level = factor(blooms_level, levels = c("remember", "understand", "analyze", "apply", "evaluate", "create")),
+    task = factor(task, levels = c("lec", "icp", "hw", "pbl2"))
+  )
 ```
 
-# Exploratory Two-way ANOVA
+# Exploratory Two-way Repeated Measures ANOVA
 See [this](https://statistics.laerd.com/spss-tutorials/two-way-repeated-measures-anova-using-spss-statistics.php) link for more information on why I think this is the best route to proceed.
 
 ## Five Assumptions
@@ -88,3 +136,23 @@ Satisfied; we initially justified treating the same Likert data as continuous wi
 #### 2. Both factors consist of matched pairs/sets
 
 Satisfied; this is exactly our data--each student completed all six levels of one factor (`blooms_level`) and also completed all four or five levels of another (`task`).
+
+#### 3. No significant outliers
+
+Satisfied; all values are literally 1-5.
+
+#### 4. Approximately normally distributed dependent variable (for each combination of factors)
+
+
+```{r mass-aov}
+mass_aov <- aov(rating ~ blooms_level * task + year + Error(student_id), data = mass)
+
+summary(mass_aov)
+
+mass_lmm <- lmer(rating ~ blooms_level * task + year + (1 | student_id), data = mass)
+
+anova(mass_lmm)
+
+summary(mass_lmm)$coefficients
+```
+
