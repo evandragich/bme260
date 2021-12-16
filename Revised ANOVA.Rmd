@@ -1,11 +1,11 @@
 ---
-title: "Revised Anova & Regression"
+title: "Revised Regression and ANOVA"
 output:
   html_document:
     df_print: paged
 ---
 
-## Data Cleaning
+# Data Cleaning
 
 ```{r load-packages-data, message = FALSE}
 library(readxl) # tidy import of xlsx
@@ -76,5 +76,15 @@ mass <- rbind(mass_2019, mass_2020)
 kinetics <- rbind(kinetics_2019, kinetics_2020)
 ```
 
-## Exploratory Two-way ANOVA
+# Exploratory Two-way ANOVA
 See [this](https://statistics.laerd.com/spss-tutorials/two-way-repeated-measures-anova-using-spss-statistics.php) link for more information on why I think this is the best route to proceed.
+
+## Five Assumptions
+
+#### 1. Dependent variable is continuous
+
+Satisfied; we initially justified treating the same Likert data as continuous with literature support and no reviewers had problems.
+
+#### 2. Both factors consist of matched pairs/sets
+
+Satisfied; this is exactly our data--each student completed all six levels of one factor (`blooms_level`) and also completed all four or five levels of another (`task`).
