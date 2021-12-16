@@ -1,14 +1,19 @@
 ---
-title: "Revised Regression and ANOVA Analysis"
-output: html_notebook
+title: "Revised Anova & Regression"
+output:
+  html_document:
+    df_print: paged
 ---
 
+## Data Cleaning
 
-```{r load-packages-data}
+```{r load-packages-data, message = FALSE}
 library(readxl) # tidy import of xlsx
 library(tidyverse) # dplyr, magrittr
 library(broom) # tidy()
 
+
+# clean individual datasets into tidy format
 mass_2019 <- read_excel(here::here("data_mass_only_from_2019_folder.xlsx"),
                         sheet = "mass balances")  %>%
   select(-c(...2, ...3)) %>%
@@ -18,7 +23,7 @@ mass_2019 <- read_excel(here::here("data_mass_only_from_2019_folder.xlsx"),
   pivot_longer(cols = where(is.numeric),
                names_to = "student_id",
                values_to = "rating") %>%
-  mutate(domain = "mass")
+  mutate(year = "2019")
 
 kinetics_2019 <- read_excel(here::here("data_kinetics_from_2019_folder.xlsx"),
                            sheet = "kinetics") %>%
@@ -30,20 +35,46 @@ kinetics_2019 <- read_excel(here::here("data_kinetics_from_2019_folder.xlsx"),
   pivot_longer(cols = where(is.numeric),
                names_to = "student_id",
                values_to = "rating") %>%
-  mutate(domain = "kinetics")
+  mutate(year = "2019")
 
-combined_2019 <-bind_rows(mass_2019,
-                           kinetics_2019)
-
-helper_letters <- c(letters, paste0(letters, letters))
+# 2020 didnt come with student id letter codes, so I'm making them here
+helper_letters <- c(letters, paste0(letters, letters)) %>%
+  .[1:48]
 
 mass_2020 <- read_excel(here::here("combined_2020.xlsx"),
-                            sheet = "Mass") %>%
-  rename(task = Lecture,
-         letters c(`...2`, `...49`)) %>%
+                            sheet = "Mass")
+
+names(mass_2020) <- c("blooms_level", helper_letters)
+
+mass_2020 <- mass_2020 %>%
+  drop_na(a) %>%
+  mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl1", 6), rep("pbl2", 6))) %>%
+  pivot_longer(cols = where(is.numeric),
+               names_to = "student_id",
+               values_to = "rating") %>%
+  mutate(year = "2020")
+
 kinetics_2020 <- read_excel(here::here("combined_2020.xlsx"),
                             sheet = "Kinetics")
 
+names(kinetics_2020) <- c("blooms_level", helper_letters)
+
+kinetics_2020 <- kinetics_2020 %>%
+  drop_na(a) %>%
+  slice(c(1:18, 25:30)) %>% # remove irrelevant PBL1 data
+  mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl2", 6))) %>%
+  pivot_longer(cols = where(is.numeric),
+               names_to = "student_id",
+               values_to = "rating") %>%
+  mutate(year = "2020")
+
 ```
 
+```{r combine-years}
+# create final dataframes for each domain
+mass <- rbind(mass_2019, mass_2020)
+kinetics <- rbind(kinetics_2019, kinetics_2020)
+```
 
+## Exploratory Two-way ANOVA
+See [this](https://statistics.laerd.com/spss-tutorials/two-way-repeated-measures-anova-using-spss-statistics.php) link for more information on why I think this is the best route to proceed.
