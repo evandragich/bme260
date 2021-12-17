@@ -26,6 +26,7 @@ library(broom) # tidy
 library(lme4) # lmer() (linear mixed models)
 library(lmerTest) # lmer() anova
 library(emmeans) # lmer() post hoc comparisons
+library(ordinal) # clmm() for ordinal regression
 
 
 # clean individual datasets into tidy format
@@ -148,7 +149,9 @@ The `(1 | year/student_id)` term in these models indicates that we have to accou
 ## Omnibus ANOVA
 
 ```{r mass-lmm}
-mass_lmm <- lmer(rating ~ blooms_level * task + (1 | year/student_id), data = mass)
+mass %>%
+  mutate(rating = factor(rating)) %>%
+clmm(rating ~ blooms_level * task + year + (1 |student_id), data = .)
 
 anova(mass_lmm) %>%
   tidy()
@@ -212,3 +215,13 @@ But, I think we can interpret each of these significant pairwise comparisons in 
 Final points: assumptions. This [paper](https://besjournals.onlinelibrary.wiley.com/doi/10.1111/2041-210X.13434) points out that even blatant violations are mostly fine, with the caveats of (1) no bimodial distributions and (2) noticeable skew and heteroscedasticity (which we have much of if I remember correctly) can lead to imprecise estimates. This is reflected in many wide confidence intervals in our data, and is an effect of both potential underlying skew/heteroscedasticity, but also more simply the Likert nature of our data.
 
 I'll have more robust assumptions work added soon, but this is a great initial proof of concept and starting point for revisions.
+
+## 1. Normality of Residuals
+
+```{r resid-normal}
+# mass
+qqnorm(residuals(mass_lmm))
+qqnorm(residuals(kinetics_lmm))
+```
+
+Satisfied, as the above residuals seem to follow the straight line on the QQ plot reasonably.
