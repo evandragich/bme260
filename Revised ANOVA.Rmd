@@ -27,6 +27,8 @@ library(lme4) # lmer() (linear mixed models)
 library(lmerTest) # lmer() anova
 library(emmeans) # lmer() post hoc comparisons
 library(ordinal) # clmm() for ordinal regression
+library(RVAideMemoire) # Anova.clm()
+library(brant) # prop odds test
 
 
 # clean individual datasets into tidy format
@@ -95,7 +97,7 @@ names(kinetics_2020) <- c("blooms_level", helper_letters)
 
 kinetics_2020 <- kinetics_2020 %>%
   drop_na(A) %>%
-  slice(c(1:18, 25:30)) %>% # remove irrelevant PBL1 data
+  dplyr::slice(c(1:18, 25:30)) %>% # remove irrelevant PBL1 data
   mutate(task = c(rep("lec", 6), rep("icp", 6), rep("hw", 6), rep("pbl", 6))) %>%
   pivot_longer(
     cols = where(is.numeric),
@@ -111,7 +113,7 @@ kinetics_2020 <- kinetics_2020 %>%
 # create final dataframes for each domain
 mass <- rbind(mass_2019, mass_2020) %>%
   mutate(
-    student_id = as.factor(student_id),
+    student_id = factor(student_id),
     year = factor(year),
     blooms_level = factor(blooms_level, 
                           levels = c("remember", "understand", "analyze", 
@@ -149,12 +151,28 @@ The `(1 | year/student_id)` term in these models indicates that we have to accou
 ## Omnibus ANOVA
 
 ```{r mass-lmm}
-mass %>%
-  mutate(rating = factor(rating)) %>%
-clmm(rating ~ blooms_level * task + year + (1 |student_id), data = .)
+mass <- mass %>%
+  mutate(rating = factor(rating, ordered = TRUE))
 
-anova(mass_lmm) %>%
-  tidy()
+mass_clmm <- clmm(rating ~ blooms_level * task + year + (1 | student_id), data = mass)
+
+summary(mass_clmm)
+
+# looks like year wasn't signfiicant
+mass_clmm2 <- clmm(rating ~ blooms_level * task + (1 | student_id), data = mass)
+
+summary(mass_clmm2)
+
+Anova.clmm(mass_clmm2)
+
+# null model to test significance of fixed effects
+mass_null <- clm(rating ~ 1, data = mass)
+anova(mass_clmm2, mass_null)
+
+# null model to test significance of random effects
+mass_null2 <- clm(rating ~ blooms_level * task, data = mass)
+anova(mass_clmm2, mass_null2)
+
 ```
 
 Great! Significant main effects for `task` and `blooms_level`, as well as their interaction. The next step is to break this down into pairwise comparisons. I chose to analyze pairs of `blooms_level` within each `task`; this is most analogous to our former method.
@@ -162,12 +180,12 @@ Great! Significant main effects for `task` and `blooms_level`, as well as their 
 ## Marginal Means and Contrasts
 
 ``` {r mass-emmeans}
-mass_emm <- ref_grid(mass_lmm) %>%
-  emmeans(specs = pairwise ~ blooms_level | task)
+mass_emm <- emmeans(mass_clmm2, specs = pairwise ~ blooms_level | task, mode = "mean.class")
 
-tidy(mass_emm$emmeans)
+mass_emm$emmeans %>%
+  summary(infer = TRUE, null = mean(as.numeric(mass$rating), na.rm = TRUE), level = 0.99)
 mass_emm$contrasts %>%
-  summary(infer = TRUE)
+  summary(infer = TRUE, level = 0.99)
 ```
 
 (Surprisingly, there don't exist any simple packages to transform this output into a neater table--I think we'd have to do it ourselves.)
@@ -187,21 +205,32 @@ This is messier than our previous output, but displays similar effects which lea
 Here is the same procedure for kinetics. Starting with model fitting and the omnibus ANOVA:
 
 ```{r kinetics-lmm}
-kinetics_lmm <- lmer(rating ~ blooms_level * task + (1 | year/student_id), data = kinetics)
+kinetics <- kinetics %>%
+  mutate(rating = factor(rating, ordered = TRUE))
 
-anova(kinetics_lmm) %>%
-  tidy()
+kinetics_clmm <- clmm(rating ~ blooms_level * task + year + (1 | student_id), data = kinetics)
+
+summary(kinetics_clmm)
+Anova.clmm(kinetics_clmm)
+
+# null model to test significance of fixed effects
+kinetics_null <- clm(rating ~ 1, data = kinetics)
+anova(kinetics_clmm, kinetics_null)
+
+# null model to test significance of random effects
+kinetics_null2 <- clm(rating ~ blooms_level * task + year, data = kinetics)
+anova(kinetics_clmm, kinetics_null2)
 ```
 
 ## Estimated Marginal Means and Contrasts
 
 ``` {r kinetics-emmeans}
-kinetics_emm <- ref_grid(kinetics_lmm) %>%
-  emmeans(specs = pairwise ~ blooms_level | task)
+kinetics_emm <- emmeans(kinetics_clmm, specs = pairwise ~ blooms_level | task, mode = "mean.class")
 
-tidy(kinetics_emm$emmeans)
+kinetics_emm$emmeans %>%
+  summary(infer = TRUE, null = mean(as.numeric(kinetics$rating), na.rm = TRUE), level = 0.99)
 kinetics_emm$contrasts %>%
-  summary(infer = TRUE)
+  summary(infer = TRUE, level = 0.99)
 ```
 
 ## My thoughts
@@ -210,18 +239,3 @@ Very analogous results again. `pbl` in particular **definitely** doesn't look as
 
 But, I think we can interpret each of these significant pairwise comparisons in a much more statistically sound way, which will please reviewers.
 
-# Assumptions for this mixed model
-
-Final points: assumptions. This [paper](https://besjournals.onlinelibrary.wiley.com/doi/10.1111/2041-210X.13434) points out that even blatant violations are mostly fine, with the caveats of (1) no bimodial distributions and (2) noticeable skew and heteroscedasticity (which we have much of if I remember correctly) can lead to imprecise estimates. This is reflected in many wide confidence intervals in our data, and is an effect of both potential underlying skew/heteroscedasticity, but also more simply the Likert nature of our data.
-
-I'll have more robust assumptions work added soon, but this is a great initial proof of concept and starting point for revisions.
-
-## 1. Normality of Residuals
-
-```{r resid-normal}
-# mass
-qqnorm(residuals(mass_lmm))
-qqnorm(residuals(kinetics_lmm))
-```
-
-Satisfied, as the above residuals seem to follow the straight line on the QQ plot reasonably.
