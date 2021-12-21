@@ -21,14 +21,11 @@ Check out the .Rmd file for full code (omitted here for brevity).
 
 ```{r load-packages-data, echo = FALSE}
 library(readxl) # tidy import of xlsx
+library(writexl) # write to xlsx file
 library(tidyverse) # dplyr, magrittr
-library(broom) # tidy
-library(lme4) # lmer() (linear mixed models)
-library(lmerTest) # lmer() anova
-library(emmeans) # lmer() post hoc comparisons
 library(ordinal) # clmm() for ordinal regression
 library(RVAideMemoire) # Anova.clm()
-library(brant) # prop odds test
+library(emmeans) # mean class and contrasts
 
 
 # clean individual datasets into tidy format
@@ -158,20 +155,15 @@ mass_clmm <- clmm(rating ~ blooms_level * task + year + (1 | student_id), data =
 
 summary(mass_clmm)
 
-# looks like year wasn't signfiicant
-mass_clmm2 <- clmm(rating ~ blooms_level * task + (1 | student_id), data = mass)
-
-summary(mass_clmm2)
-
-Anova.clmm(mass_clmm2)
+Anova.clmm(mass_clmm)
 
 # null model to test significance of fixed effects
 mass_null <- clm(rating ~ 1, data = mass)
-anova(mass_clmm2, mass_null)
+anova(mass_clmm, mass_null)
 
 # null model to test significance of random effects
 mass_null2 <- clm(rating ~ blooms_level * task, data = mass)
-anova(mass_clmm2, mass_null2)
+anova(mass_clmm, mass_null2)
 
 ```
 
@@ -180,11 +172,20 @@ Great! Significant main effects for `task` and `blooms_level`, as well as their 
 ## Marginal Means and Contrasts
 
 ``` {r mass-emmeans}
-mass_emm <- emmeans(mass_clmm2, specs = pairwise ~ blooms_level | task, mode = "mean.class")
+# split by task, then compares pairs of blooms levels
+mass_emm_t <- emmeans(mass_clmm, specs = pairwise ~ blooms_level | task, mode = "mean.class")
 
-mass_emm$emmeans %>%
+mass_task_means <- mass_emm_t$emmeans %>%
   summary(infer = TRUE, null = mean(as.numeric(mass$rating), na.rm = TRUE), level = 0.99)
-mass_emm$contrasts %>%
+mass_task_contrasts <-mass_emm_t$contrasts %>%
+  summary(infer = TRUE, level = 0.99)
+
+# split by blooms level, then compares pairs of tasks
+mass_emm_bl <- emmeans(mass_clmm, specs = pairwise ~ task | blooms_level, mode = "mean.class")
+
+mass_bl_means <- mass_emm_bl$emmeans %>%
+  summary(infer = TRUE, null = mean(as.numeric(mass$rating), na.rm = TRUE), level = 0.99)
+mass_bl_contrasts <- mass_emm_bl$contrasts %>%
   summary(infer = TRUE, level = 0.99)
 ```
 
@@ -225,11 +226,19 @@ anova(kinetics_clmm, kinetics_null2)
 ## Estimated Marginal Means and Contrasts
 
 ``` {r kinetics-emmeans}
-kinetics_emm <- emmeans(kinetics_clmm, specs = pairwise ~ blooms_level | task, mode = "mean.class")
+kinetics_emm_t <- emmeans(kinetics_clmm, specs = pairwise ~ blooms_level | task, mode = "mean.class")
 
-kinetics_emm$emmeans %>%
+kinetics_task_means <- kinetics_emm_t$emmeans %>%
   summary(infer = TRUE, null = mean(as.numeric(kinetics$rating), na.rm = TRUE), level = 0.99)
-kinetics_emm$contrasts %>%
+kinetics_task_contrasts <-kinetics_emm_t$contrasts %>%
+  summary(infer = TRUE, level = 0.99)
+
+
+kinetics_emm_bl <- emmeans(kinetics_clmm, specs = pairwise ~ task | blooms_level, mode = "mean.class")
+
+kinetics_bl_means <- kinetics_emm_bl$emmeans %>%
+  summary(infer = TRUE, null = mean(as.numeric(kinetics$rating), na.rm = TRUE), level = 0.99)
+kinetics_bl_contrasts <- kinetics_emm_bl$contrasts %>%
   summary(infer = TRUE, level = 0.99)
 ```
 
@@ -238,4 +247,20 @@ kinetics_emm$contrasts %>%
 Very analogous results again. `pbl` in particular **definitely** doesn't look as pretty as our original output.
 
 But, I think we can interpret each of these significant pairwise comparisons in a much more statistically sound way, which will please reviewers.
+
+## Write results to xlsx
+
+```{r write-csv}
+
+write_xlsx(list("Mass by Bloom's -  Mean Classes" = mass_bl_means,
+                "Mass by Bloom's -  Contrasts" = mass_bl_contrasts,
+                "Mass by Task -  Mean Classes" = mass_task_means,
+                "Mass by Task -  Contrasts" = mass_task_contrasts,
+                "Kinetics by Bloom's -  Mean Classes" = kinetics_bl_means,
+                "Kinetics by Bloom's -  Contrasts" = kinetics_bl_contrasts,
+                "Kinetics by Task -  Mean Classes" = kinetics_task_means,
+                "Kinetics by Task -  Contrasts" = kinetics_task_contrasts),
+            "clmm_anova_output.xlsx")
+```
+
 

@@ -9,6 +9,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
 
 
+<meta name="author" content="Evan Dragich" />
 
 
 <title>Revised Regression</title>
@@ -166,222 +167,296 @@ pre code {
 
 
 <h1 class="title toc-ignore">Revised Regression</h1>
+<h4 class="author">Evan Dragich</h4>
+<h4 class="date">Last compiled on 2021-12-21</h4>
 
 </div>
 
 
 <div id="data-cleaning" class="section level1">
 <h1>Data Cleaning</h1>
-<pre class="r"><code>library(readxl) # tidy import of xlsx
-library(tidyverse) # dplyr, magrittr
-library(broom) # tidy
-library(lme4) # lmer() (linear mixed models)
-library(lmerTest) # lmer() anova
-library(emmeans) # lmer() post hoc comparisons
-
-
-# clean individual datasets into tidy format
-mass_2019 &lt;- read_excel(here::here(&quot;data_mass_only_from_2019_folder.xlsx&quot;),
-  sheet = &quot;mass balances&quot;
-) %&gt;%
-  dplyr::select(-c(...2, ...3)) %&gt;%
-  drop_na(...1) %&gt;%
-  mutate(task = c(rep(&quot;lec&quot;, 6), rep(&quot;icp&quot;, 6), rep(&quot;hw&quot;, 6), rep(&quot;pbl&quot;, 12))) %&gt;%
-  rename(blooms_level = `...1`) %&gt;%
-  pivot_longer(
-    cols = where(is.numeric),
-    names_to = &quot;student_id&quot;,
-    values_to = &quot;rating&quot;
-  ) %&gt;%
-  mutate(
-    year = &quot;2019&quot;,
-    student_id = str_to_lower(student_id)
-  ) # 2019 student ids will be lowercase; 2020 uppercase
-
-kinetics_2019 &lt;- read_excel(here::here(&quot;data_kinetics_from_2019_folder.xlsx&quot;),
-  sheet = &quot;kinetics&quot;
-) %&gt;%
-  dplyr::select(-c(...2, ...3)) %&gt;%
-  drop_na(...1) %&gt;%
-  slice_head(n = 24) %&gt;% # remove irrelevant PBL1 data
-  mutate(task = c(rep(&quot;lec&quot;, 6), rep(&quot;icp&quot;, 6), rep(&quot;hw&quot;, 6), rep(&quot;pbl&quot;, 6))) %&gt;%
-  rename(blooms_level = `...1`) %&gt;%
-  pivot_longer(
-    cols = where(is.numeric),
-    names_to = &quot;student_id&quot;,
-    values_to = &quot;rating&quot;
-  ) %&gt;%
-  mutate(
-    year = &quot;2019&quot;,
-    student_id = str_to_lower(student_id)
-  )
-
-# 2020 didnt come with student id letter codes, so I&#39;m making them here
-# same sequence as 2019, but all caps to distinguish
-helper_letters &lt;- c(LETTERS, paste0(LETTERS, LETTERS)) %&gt;%
-  .[1:48]
-
-mass_2020 &lt;- read_excel(here::here(&quot;combined_2020.xlsx&quot;),
-  sheet = &quot;Mass&quot;
-)
-
-names(mass_2020) &lt;- c(&quot;blooms_level&quot;, helper_letters)
-
-mass_2020 &lt;- mass_2020 %&gt;%
-  drop_na(A) %&gt;%
-  mutate(task = c(rep(&quot;lec&quot;, 6), rep(&quot;icp&quot;, 6), rep(&quot;hw&quot;, 6), rep(&quot;pbl&quot;, 12))) %&gt;%
-  pivot_longer(
-    cols = where(is.numeric),
-    names_to = &quot;student_id&quot;,
-    values_to = &quot;rating&quot;
-  ) %&gt;%
-  mutate(year = &quot;2020&quot;,
-         blooms_level = str_to_lower(blooms_level))
-
-kinetics_2020 &lt;- read_excel(here::here(&quot;combined_2020.xlsx&quot;),
-  sheet = &quot;Kinetics&quot;
-)
-
-names(kinetics_2020) &lt;- c(&quot;blooms_level&quot;, helper_letters)
-
-kinetics_2020 &lt;- kinetics_2020 %&gt;%
-  drop_na(A) %&gt;%
-  slice(c(1:18, 25:30)) %&gt;% # remove irrelevant PBL1 data
-  mutate(task = c(rep(&quot;lec&quot;, 6), rep(&quot;icp&quot;, 6), rep(&quot;hw&quot;, 6), rep(&quot;pbl&quot;, 6))) %&gt;%
-  pivot_longer(
-    cols = where(is.numeric),
-    names_to = &quot;student_id&quot;,
-    values_to = &quot;rating&quot;
-  ) %&gt;%
-  mutate(year = &quot;2020&quot;,
-         blooms_level = str_to_lower(blooms_level))</code></pre>
-<pre class="r"><code># create final dataframes for each domain
-mass &lt;- rbind(mass_2019, mass_2020) %&gt;%
-  mutate(
-    student_id = as.factor(student_id),
-    year = factor(year),
-    blooms_level = factor(blooms_level, levels = c(&quot;remember&quot;, &quot;understand&quot;, &quot;analyze&quot;, &quot;apply&quot;, &quot;evaluate&quot;, &quot;create&quot;)),
-    task = factor(task, levels = c(&quot;lec&quot;, &quot;icp&quot;, &quot;hw&quot;, &quot;pbl&quot;))
-  )
-
-# # gather student_ids of any students with NAs (ANOVA wont tolerate this).
-# mass_to_remove &lt;- mass %&gt;%
-#   filter(is.na(rating)) %&gt;%
-#   dplyr::select(student_id) %&gt;%
-#   pull()
-# 
-# # filter out all observations from said student ids
-# mass &lt;- mass %&gt;%
-#   filter(!(student_id %in% mass_to_remove)) %&gt;%
-#   mutate(student_id = fct_drop(student_id))
-
-kinetics &lt;- rbind(kinetics_2019, kinetics_2020) %&gt;%
-  mutate(
-    student_id = factor(student_id),
-    year = factor(year),
-    blooms_level = factor(blooms_level, levels = c(&quot;remember&quot;, &quot;understand&quot;, &quot;analyze&quot;, &quot;apply&quot;, &quot;evaluate&quot;, &quot;create&quot;)),
-    task = factor(task, levels = c(&quot;lec&quot;, &quot;icp&quot;, &quot;hw&quot;, &quot;pbl&quot;))
-  )</code></pre>
+<p>Check out the .Rmd file for full code (omitted here for brevity).</p>
 </div>
 <div id="motivation-for-a-new-statistical-method" class="section level1">
 <h1>Motivation for a new statistical method</h1>
-<p>My personal biggest concern with our methods, even before receiving reviewer comments, was the blatant violation of the <a href="https://statistics.laerd.com/spss-tutorials/multiple-regression-using-spss-statistics.php">independence condition</a> for standard linear regression. I <em>knew</em> there was an alternative–something that could account for the repeated measures, or “nesting” of <code>blooms_level * task</code> within each student.</p>
+<p>My personal biggest concern with our methods, even before receiving reviewer comments, was the blatant violation of the <a href="https://statistics.laerd.com/spss-tutorials/multiple-regression-using-spss-statistics.php">independence condition</a> for standard linear regression. I <strong>knew</strong> there was an alternative–something that could account for the repeated measures, or “nesting” of <code>blooms_level * task</code> within each student.</p>
 <p>During my search, I finally found it– <a href="https://statistics.laerd.com/spss-tutorials/two-way-repeated-measures-anova-using-spss-statistics.php">a two-way repeated measures ANOVA</a>. This page has good vignettes for sample scenarios, which you can draw analogies to our data structure.</p>
 <p>I tried to find out how to implement it, and ran into <a href="https://www.r-bloggers.com/2018/04/how-to-do-repeated-measures-anovas-in-r/">recent literature</a> eschewing ANOVA in favor of regression. This page also pointed me to the family of linear mixed models, which extend simple linear regression by allowing for random effects, in addtion to fixed.</p>
+<div id="random-effects" class="section level2">
+<h2>Random Effects</h2>
 <p>Random effects control for the repeated measures factor, by essentially allowing factors to vary along <code>student_id</code> without using up degrees of freedom to try to make sense of the results. In other words, <code>student_id</code> is a random effect in our case because we have to account for each student having a different, random intercept, before examining the global, fixed effects of <code>task</code> and <code>blooms_level</code>.</p>
 <p>The <code>(1 | year/student_id)</code> term in these models indicates that we have to account for the random, nuisance variance caused by each student and each year/cohort before examining the effects of <code>blooms_level</code>, <code>task</code>, and their interaction. Specifically, the <code>/</code> nesting operator means that we have a first random intercept to account for variance across years, and after accounting for this variance we introduce a random intercept to further account for that particular student’s variance.</p>
-<pre class="r"><code>mass_lmm &lt;- lmer(rating ~ blooms_level * task + (1 | year/student_id), data = mass)
+</div>
+</div>
+<div id="mass-analysis" class="section level1">
+<h1>Mass Analysis</h1>
+<div id="omnibus-anova" class="section level2">
+<h2>Omnibus ANOVA</h2>
+<pre class="r"><code>mass &lt;- mass %&gt;%
+  mutate(rating = factor(rating, ordered = TRUE))
 
+mass_clmm &lt;- clmm(rating ~ blooms_level * task + year + (1 | student_id), data = mass)
 
-anova(mass_lmm) %&gt;%
-  tidy()</code></pre>
+summary(mass_clmm)</code></pre>
+<pre><code>## Cumulative Link Mixed Model fitted with the Laplace approximation
+## 
+## formula: rating ~ blooms_level * task + year + (1 | student_id)
+## data:    mass
+## 
+##  link  threshold nobs logLik   AIC     niter       max.grad cond.H 
+##  logit flexible  2668 -3204.95 6467.90 4687(18753) 1.26e-03 1.2e+03
+## 
+## Random effects:
+##  Groups     Name        Variance Std.Dev.
+##  student_id (Intercept) 1.566    1.252   
+## Number of groups:  student_id 90 
+## 
+## Coefficients:
+##                                Estimate Std. Error z value Pr(&gt;|z|)    
+## blooms_levelunderstand          0.55051    0.28832   1.909  0.05622 .  
+## blooms_levelanalyze            -1.31682    0.28375  -4.641 3.47e-06 ***
+## blooms_levelapply              -1.22389    0.28091  -4.357 1.32e-05 ***
+## blooms_levelevaluate           -1.87272    0.28485  -6.574 4.88e-11 ***
+## blooms_levelcreate             -2.77720    0.29524  -9.406  &lt; 2e-16 ***
+## taskicp                        -0.12316    0.28721  -0.429  0.66805    
+## taskhw                          0.48298    0.29046   1.663  0.09634 .  
+## taskpbl                        -1.37448    0.24985  -5.501 3.77e-08 ***
+## year2020                       -0.51974    0.27589  -1.884  0.05958 .  
+## blooms_levelunderstand:taskicp -0.11151    0.40643  -0.274  0.78381    
+## blooms_levelanalyze:taskicp     1.09333    0.39622   2.759  0.00579 ** 
+## blooms_levelapply:taskicp       1.71607    0.39980   4.292 1.77e-05 ***
+## blooms_levelevaluate:taskicp    0.99320    0.39883   2.490  0.01276 *  
+## blooms_levelcreate:taskicp      0.62510    0.40634   1.538  0.12396    
+## blooms_levelunderstand:taskhw  -0.35728    0.41285  -0.865  0.38682    
+## blooms_levelanalyze:taskhw      1.05436    0.40420   2.609  0.00909 ** 
+## blooms_levelapply:taskhw        2.00345    0.41634   4.812 1.49e-06 ***
+## blooms_levelevaluate:taskhw     0.92013    0.40537   2.270  0.02322 *  
+## blooms_levelcreate:taskhw       0.70755    0.41599   1.701  0.08897 .  
+## blooms_levelunderstand:taskpbl  0.01264    0.34873   0.036  0.97108    
+## blooms_levelanalyze:taskpbl     2.76783    0.35074   7.892 2.99e-15 ***
+## blooms_levelapply:taskpbl       2.88040    0.35009   8.228  &lt; 2e-16 ***
+## blooms_levelevaluate:taskpbl    3.49730    0.35479   9.858  &lt; 2e-16 ***
+## blooms_levelcreate:taskpbl      4.99270    0.37088  13.462  &lt; 2e-16 ***
+## ---
+## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+## 
+## Threshold coefficients:
+##     Estimate Std. Error z value
+## 1|2  -5.2848     0.3173 -16.657
+## 2|3  -3.1013     0.2933 -10.572
+## 3|4  -1.3877     0.2870  -4.835
+## 4|5   0.3534     0.2856   1.237
+## (32 observations deleted due to missingness)</code></pre>
+<pre class="r"><code># looks like year wasn&#39;t signfiicant
+mass_clmm2 &lt;- clmm(rating ~ blooms_level * task + (1 | student_id), data = mass)
+
+summary(mass_clmm2)</code></pre>
+<pre><code>## Cumulative Link Mixed Model fitted with the Laplace approximation
+## 
+## formula: rating ~ blooms_level * task + (1 | student_id)
+## data:    mass
+## 
+##  link  threshold nobs logLik   AIC     niter       max.grad cond.H 
+##  logit flexible  2668 -3206.68 6469.36 4735(23323) 4.46e-03 1.2e+03
+## 
+## Random effects:
+##  Groups     Name        Variance Std.Dev.
+##  student_id (Intercept) 1.648    1.284   
+## Number of groups:  student_id 90 
+## 
+## Coefficients:
+##                                Estimate Std. Error z value Pr(&gt;|z|)    
+## blooms_levelunderstand          0.55000    0.28859   1.906  0.05667 .  
+## blooms_levelanalyze            -1.31694    0.28404  -4.637 3.54e-06 ***
+## blooms_levelapply              -1.22481    0.28121  -4.356 1.33e-05 ***
+## blooms_levelevaluate           -1.87395    0.28511  -6.573 4.94e-11 ***
+## blooms_levelcreate             -2.77879    0.29549  -9.404  &lt; 2e-16 ***
+## taskicp                        -0.12354    0.28742  -0.430  0.66732    
+## taskhw                          0.48263    0.29068   1.660  0.09685 .  
+## taskpbl                        -1.37517    0.25014  -5.498 3.85e-08 ***
+## blooms_levelunderstand:taskicp -0.11163    0.40668  -0.274  0.78370    
+## blooms_levelanalyze:taskicp     1.09323    0.39652   2.757  0.00583 ** 
+## blooms_levelapply:taskicp       1.71726    0.40004   4.293 1.77e-05 ***
+## blooms_levelevaluate:taskicp    0.99309    0.39908   2.488  0.01283 *  
+## blooms_levelcreate:taskicp      0.62585    0.40651   1.540  0.12366    
+## blooms_levelunderstand:taskhw  -0.35689    0.41303  -0.864  0.38754    
+## blooms_levelanalyze:taskhw      1.05441    0.40442   2.607  0.00913 ** 
+## blooms_levelapply:taskhw        2.00459    0.41653   4.813 1.49e-06 ***
+## blooms_levelevaluate:taskhw     0.92089    0.40559   2.270  0.02318 *  
+## blooms_levelcreate:taskhw       0.70857    0.41621   1.702  0.08868 .  
+## blooms_levelunderstand:taskpbl  0.01386    0.34910   0.040  0.96833    
+## blooms_levelanalyze:taskpbl     2.76817    0.35108   7.885 3.15e-15 ***
+## blooms_levelapply:taskpbl       2.88174    0.35044   8.223  &lt; 2e-16 ***
+## blooms_levelevaluate:taskpbl    3.49910    0.35513   9.853  &lt; 2e-16 ***
+## blooms_levelcreate:taskpbl      4.99451    0.37120  13.455  &lt; 2e-16 ***
+## ---
+## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+## 
+## Threshold coefficients:
+##     Estimate Std. Error z value
+## 1|2  -5.0098     0.2816 -17.789
+## 2|3  -2.8261     0.2550 -11.083
+## 3|4  -1.1127     0.2484  -4.479
+## 4|5   0.6281     0.2476   2.537
+## (32 observations deleted due to missingness)</code></pre>
+<pre class="r"><code>Anova.clmm(mass_clmm2)</code></pre>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
-{"columns":[{"label":["term"],"name":[1],"type":["chr"],"align":["left"]},{"label":["sumsq"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["meansq"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["NumDF"],"name":[4],"type":["int"],"align":["right"]},{"label":["DenDF"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["statistic"],"name":[6],"type":["dbl"],"align":["right"]},{"label":["p.value"],"name":[7],"type":["dbl"],"align":["right"]}],"data":[{"1":"blooms_level","2":"182.48920","3":"36.49784","4":"5","5":"2554.676","6":"48.85552","7":"1.968105e-48"},{"1":"task","2":"99.41585","3":"33.13862","4":"3","5":"2554.619","6":"44.35891","7":"6.117596e-28"},{"1":"blooms_level:task","2":"360.64667","3":"24.04311","4":"15","5":"2554.863","6":"32.18379","7":"5.342388e-85"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["LR Chisq"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["Df"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["Pr(>Chisq)"],"name":[3],"type":["dbl"],"align":["right"]}],"data":[{"1":"91.82989","2":"5","3":"2.772026e-18","_rn_":"blooms_level"},{"1":"110.84356","2":"3","3":"7.224165e-24","_rn_":"task"},{"1":"428.54473","2":"15","3":"6.841567e-82","_rn_":"blooms_level:task"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+  </script>
+</div>
+<pre class="r"><code># null model to test significance of fixed effects
+mass_null &lt;- clm(rating ~ 1, data = mass)
+anova(mass_clmm2, mass_null)</code></pre>
+<div data-pagedtable="false">
+<script data-pagedtable-source type="application/json">
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["no.par"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["AIC"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["logLik"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["LR.stat"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["df"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["Pr(>Chisq)"],"name":[6],"type":["dbl"],"align":["right"]}],"data":[{"1":"4","2":"7562.858","3":"-3777.429","4":"NA","5":"NA","6":"NA","_rn_":"mass_null"},{"1":"28","2":"6469.362","3":"-3206.681","4":"1141.496","5":"24","6":"7.168013e-226","_rn_":"mass_clmm2"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+  </script>
+</div>
+<pre class="r"><code># null model to test significance of random effects
+mass_null2 &lt;- clm(rating ~ blooms_level * task, data = mass)
+anova(mass_clmm2, mass_null2)</code></pre>
+<div data-pagedtable="false">
+<script data-pagedtable-source type="application/json">
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["no.par"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["AIC"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["logLik"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["LR.stat"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["df"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["Pr(>Chisq)"],"name":[6],"type":["dbl"],"align":["right"]}],"data":[{"1":"27","2":"7142.190","3":"-3544.095","4":"NA","5":"NA","6":"NA","_rn_":"mass_null2"},{"1":"28","2":"6469.362","3":"-3206.681","4":"674.8282","5":"1","6":"8.904748e-149","_rn_":"mass_clmm2"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
   </script>
 </div>
 <p>Great! Significant main effects for <code>task</code> and <code>blooms_level</code>, as well as their interaction. The next step is to break this down into pairwise comparisons. I chose to analyze pairs of <code>blooms_level</code> within each <code>task</code>; this is most analogous to our former method.</p>
-<pre class="r"><code>#emmeans(mass_lmm, pairwise ~ blooms_level | task)
+</div>
+<div id="marginal-means-and-contrasts" class="section level2">
+<h2>Marginal Means and Contrasts</h2>
+<pre class="r"><code>mass_emm &lt;- emmeans(mass_clmm2, specs = pairwise ~ blooms_level | task, mode = &quot;mean.class&quot;)
 
-mass_emm &lt;- ref_grid(mass_lmm) %&gt;%
-  emmeans(specs = pairwise ~ blooms_level | task)
-
-tidy(mass_emm$emmeans)</code></pre>
+mass_emm$emmeans %&gt;%
+  summary(infer = TRUE, null = mean(as.numeric(mass$rating), na.rm = TRUE), level = 0.99)</code></pre>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
-{"columns":[{"label":["blooms_level"],"name":[1],"type":["chr"],"align":["left"]},{"label":["task"],"name":[2],"type":["chr"],"align":["left"]},{"label":["estimate"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["std.error"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["df"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["statistic"],"name":[6],"type":["dbl"],"align":["right"]},{"label":["p.value"],"name":[7],"type":["dbl"],"align":["right"]}],"data":[{"1":"remember","2":"lec","3":"3.992647","4":"0.1508680","5":"2.413296","6":"26.46451","7":"0.0004939899"},{"1":"understand","2":"lec","3":"4.239458","4":"0.1505345","5":"2.391952","6":"28.16270","7":"0.0004492823"},{"1":"analyze","2":"lec","3":"3.344374","4":"0.1511965","5":"2.434335","6":"22.11939","7":"0.0007241896"},{"1":"apply","2":"lec","3":"3.395013","4":"0.1505345","5":"2.391952","6":"22.55306","7":"0.0007631219"},{"1":"evaluate","2":"lec","3":"3.056594","4":"0.1515309","5":"2.455896","6":"20.17142","7":"0.0008630689"},{"1":"create","2":"lec","3":"2.644333","4":"0.1508680","5":"2.413296","6":"17.52746","7":"0.0013298023"},{"1":"remember","2":"icp","3":"3.970175","4":"0.1508680","5":"2.413296","6":"26.31556","7":"0.0005007465"},{"1":"understand","2":"icp","3":"4.138715","4":"0.1508680","5":"2.413296","6":"27.43269","7":"0.0004530606"},{"1":"analyze","2":"icp","3":"3.839458","4":"0.1505345","5":"2.391952","6":"25.50550","7":"0.0005691223"},{"1":"apply","2":"icp","3":"4.149951","4":"0.1508680","5":"2.413296","6":"27.50717","7":"0.0004501132"},{"1":"evaluate","2":"icp","3":"3.507528","4":"0.1508557","5":"2.412385","6":"23.25088","7":"0.0006759803"},{"1":"create","2":"icp","3":"2.895902","4":"0.1511952","5":"2.434260","6":"19.15339","7":"0.0010267391"},{"1":"remember","2":"hw","3":"4.206125","4":"0.1505345","5":"2.391952","6":"27.94127","7":"0.0004578257"},{"1":"understand","2":"hw","3":"4.273546","4":"0.1508680","5":"2.413296","6":"28.32640","7":"0.0004194080"},{"1":"analyze","2":"hw","3":"4.084388","4":"0.1508565","5":"2.412436","6":"27.07465","7":"0.0004686357"},{"1":"apply","2":"hw","3":"4.475793","4":"0.1508680","5":"2.413296","6":"29.66696","7":"0.0003752158"},{"1":"evaluate","2":"hw","3":"3.777191","4":"0.1508557","5":"2.412385","6":"25.03844","7":"0.0005656931"},{"1":"create","2":"hw","3":"3.242345","4":"0.1515268","5":"2.455706","6":"21.39784","7":"0.0007474067"},{"1":"remember","2":"pbl","3":"3.307254","4":"0.1362505","5":"1.605527","6":"24.27334","7":"0.0047346320"},{"1":"understand","2":"pbl","3":"3.610625","4":"0.1362505","5":"1.605527","6":"26.49990","7":"0.0041134116"},{"1":"analyze","2":"pbl","3":"4.003465","4":"0.1364395","5":"1.614425","6":"29.34242","7":"0.0034054636"},{"1":"apply","2":"pbl","3":"4.065681","4":"0.1362505","5":"1.605527","6":"29.83975","7":"0.0034006134"},{"1":"evaluate","2":"pbl","3":"4.060063","4":"0.1362505","5":"1.605527","6":"29.79852","7":"0.0034081615"},{"1":"create","2":"pbl","3":"4.261680","4":"0.1360526","5":"1.596166","6":"31.32376","7":"0.0032336900"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["blooms_level"],"name":[1],"type":["fct"],"align":["left"]},{"label":["task"],"name":[2],"type":["fct"],"align":["left"]},{"label":["mean.class"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["SE"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["df"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["asymp.LCL"],"name":[6],"type":["dbl"],"align":["right"]},{"label":["asymp.UCL"],"name":[7],"type":["dbl"],"align":["right"]},{"label":["null"],"name":[8],"type":["dbl"],"align":["right"]},{"label":["z.ratio"],"name":[9],"type":["dbl"],"align":["right"]},{"label":["p.value"],"name":[10],"type":["dbl"],"align":["right"]}],"data":[{"1":"remember","2":"lec","3":"4.038023","4":"0.11637208","5":"Inf","6":"3.738268","7":"4.337778","8":"3.785607","9":"2.1690407","10":"3.007959e-02","_rn_":"1"},{"1":"understand","2":"lec","3":"4.284204","4":"0.10248995","5":"Inf","6":"4.020208","7":"4.548201","8":"3.785607","9":"4.8648391","10":"1.145499e-06","_rn_":"2"},{"1":"analyze","2":"lec","3":"3.368863","4":"0.12550180","5":"Inf","6":"3.045591","7":"3.692134","8":"3.785607","9":"-3.3206265","10":"8.981563e-04","_rn_":"3"},{"1":"apply","2":"lec","3":"3.417537","4":"0.12341289","5":"Inf","6":"3.099646","7":"3.735427","8":"3.785607","9":"-2.9824313","10":"2.859688e-03","_rn_":"4"},{"1":"evaluate","2":"lec","3":"3.073989","4":"0.12521732","5":"Inf","6":"2.751451","7":"3.396528","8":"3.785607","9":"-5.6830637","10":"1.323029e-08","_rn_":"5"},{"1":"create","2":"lec","3":"2.605855","4":"0.12358965","5":"Inf","6":"2.287509","7":"2.924201","8":"3.785607","9":"-9.5457195","10":"1.351661e-21","_rn_":"6"},{"1":"remember","2":"icp","3":"3.979078","4":"0.11697237","5":"Inf","6":"3.677777","7":"4.280379","8":"3.785607","9":"1.6539842","10":"9.813072e-02","_rn_":"7"},{"1":"understand","2":"icp","3":"4.182540","4":"0.10919678","5":"Inf","6":"3.901267","7":"4.463812","8":"3.785607","9":"3.6350204","10":"2.779587e-04","_rn_":"8"},{"1":"analyze","2":"icp","3":"3.869651","4":"0.11618067","5":"Inf","6":"3.570390","7":"4.168913","8":"3.785607","9":"0.7233924","10":"4.694388e-01","_rn_":"9"},{"1":"apply","2":"icp","3":"4.206439","4":"0.10629629","5":"Inf","6":"3.932637","7":"4.480240","8":"3.785607","9":"3.9590408","10":"7.525137e-05","_rn_":"10"},{"1":"evaluate","2":"icp","3":"3.533420","4":"0.12475373","5":"Inf","6":"3.212076","7":"3.854765","8":"3.785607","9":"-2.0214767","10":"4.323045e-02","_rn_":"11"},{"1":"create","2":"icp","3":"2.862925","4":"0.12633863","5":"Inf","6":"2.537499","7":"3.188352","8":"3.785607","9":"-7.3032445","10":"2.809100e-13","_rn_":"12"},{"1":"remember","2":"hw","3":"4.255694","4":"0.10531889","5":"Inf","6":"3.984411","7":"4.526978","8":"3.785607","9":"4.4634621","10":"8.064585e-06","_rn_":"13"},{"1":"understand","2":"hw","3":"4.336004","4":"0.10204805","5":"Inf","6":"4.073146","7":"4.598863","8":"3.785607","9":"5.3935112","10":"6.909401e-08","_rn_":"14"},{"1":"analyze","2":"hw","3":"4.139997","4":"0.11062653","5":"Inf","6":"3.855042","7":"4.424952","8":"3.785607","9":"3.2034754","10":"1.357796e-03","_rn_":"15"},{"1":"apply","2":"hw","3":"4.550009","4":"0.08536272","5":"Inf","6":"4.330130","7":"4.769889","8":"3.785607","9":"8.9547536","10":"3.404953e-19","_rn_":"16"},{"1":"evaluate","2":"hw","3":"3.808105","4":"0.12361823","5":"Inf","6":"3.489685","7":"4.126524","8":"3.785607","9":"0.1819924","10":"8.555887e-01","_rn_":"17"},{"1":"create","2":"hw","3":"3.225515","4":"0.13503253","5":"Inf","6":"2.877694","7":"3.573335","8":"3.785607","9":"-4.1478339","10":"3.356358e-05","_rn_":"18"},{"1":"remember","2":"pbl","3":"3.338050","4":"0.10342307","5":"Inf","6":"3.071650","7":"3.604450","8":"3.785607","9":"-4.3274389","10":"1.508532e-05","_rn_":"19"},{"1":"understand","2":"pbl","3":"3.633971","4":"0.10018142","5":"Inf","6":"3.375921","7":"3.892022","8":"3.785607","9":"-1.5136114","10":"1.301244e-01","_rn_":"20"},{"1":"analyze","2":"pbl","3":"4.073729","4":"0.09273008","5":"Inf","6":"3.834872","7":"4.312586","8":"3.785607","9":"3.1070987","10":"1.889333e-03","_rn_":"21"},{"1":"apply","2":"pbl","3":"4.167788","4":"0.09007717","5":"Inf","6":"3.935765","7":"4.399811","8":"3.785607","9":"4.2428152","10":"2.207332e-05","_rn_":"22"},{"1":"evaluate","2":"pbl","3":"4.153507","4":"0.09108553","5":"Inf","6":"3.918887","7":"4.388128","8":"3.785607","9":"4.0390641","10":"5.366489e-05","_rn_":"23"},{"1":"create","2":"pbl","3":"4.400926","4":"0.08061670","5":"Inf","6":"4.193272","7":"4.608581","8":"3.785607","9":"7.6326516","10":"2.299737e-14","_rn_":"24"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
   </script>
 </div>
 <pre class="r"><code>mass_emm$contrasts %&gt;%
-  summary(infer = TRUE)</code></pre>
+  summary(infer = TRUE, level = 0.99)</code></pre>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
-{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["contrast"],"name":[1],"type":["fct"],"align":["left"]},{"label":["task"],"name":[2],"type":["fct"],"align":["left"]},{"label":["estimate"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["SE"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["df"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["lower.CL"],"name":[6],"type":["dbl"],"align":["right"]},{"label":["upper.CL"],"name":[7],"type":["dbl"],"align":["right"]},{"label":["t.ratio"],"name":[8],"type":["dbl"],"align":["right"]},{"label":["p.value"],"name":[9],"type":["dbl"],"align":["right"]}],"data":[{"1":"remember - understand","2":"lec","3":"-0.246810519","4":"0.12923854","5":"2554.972","6":"-0.61538252","7":"0.121761482","8":"-1.90972852","9":"3.962824e-01","_rn_":"1"},{"1":"remember - analyze","2":"lec","3":"0.648273560","4":"0.12994860","5":"2554.482","6":"0.27767651","7":"1.018870612","8":"4.98869233","9":"9.614011e-06","_rn_":"2"},{"1":"remember - apply","2":"lec","3":"0.597633925","4":"0.12923854","5":"2554.972","6":"0.22906192","7":"0.966205926","8":"4.62427029","9":"5.788169e-05","_rn_":"3"},{"1":"remember - evaluate","2":"lec","3":"0.936053762","4":"0.13033618","5":"2554.573","6":"0.56435138","7":"1.307756142","8":"7.18184140","9":"0.000000e+00","_rn_":"4"},{"1":"remember - create","2":"lec","3":"1.348314607","4":"0.12956770","5":"2554.376","6":"0.97880381","7":"1.717825408","8":"10.40625556","9":"0.000000e+00","_rn_":"5"},{"1":"understand - analyze","2":"lec","3":"0.895084079","4":"0.12962032","5":"2555.078","6":"0.52542329","7":"1.264744864","8":"6.90543028","9":"0.000000e+00","_rn_":"6"},{"1":"understand - apply","2":"lec","3":"0.844444444","4":"0.12884587","5":"2554.376","6":"0.47699222","7":"1.211896673","8":"6.55391164","9":"6.403564e-10","_rn_":"7"},{"1":"understand - evaluate","2":"lec","3":"1.182864281","4":"0.13000878","5":"2555.167","6":"0.81209566","7":"1.553632902","8":"9.09834139","9":"0.000000e+00","_rn_":"8"},{"1":"understand - create","2":"lec","3":"1.595125126","4":"0.12923854","5":"2554.972","6":"1.22655313","7":"1.963697126","8":"12.34248829","9":"0.000000e+00","_rn_":"9"},{"1":"analyze - apply","2":"lec","3":"-0.050639635","4":"0.12962032","5":"2555.078","6":"-0.42030042","7":"0.319021151","8":"-0.39067667","9":"9.988272e-01","_rn_":"10"},{"1":"analyze - evaluate","2":"lec","3":"0.287780202","4":"0.13068833","5":"2554.469","6":"-0.08492649","7":"0.660486893","8":"2.20203438","9":"2.370284e-01","_rn_":"11"},{"1":"analyze - create","2":"lec","3":"0.700041047","4":"0.12994860","5":"2554.482","6":"0.32944399","7":"1.070638099","8":"5.38706128","9":"1.165197e-06","_rn_":"12"},{"1":"apply - evaluate","2":"lec","3":"0.338419836","4":"0.13000878","5":"2555.167","6":"-0.03234878","7":"0.709188457","8":"2.60305367","9":"9.681761e-02","_rn_":"13"},{"1":"apply - create","2":"lec","3":"0.750680681","4":"0.12923854","5":"2554.972","6":"0.38210868","7":"1.119252682","8":"5.80848949","9":"1.056355e-07","_rn_":"14"},{"1":"evaluate - create","2":"lec","3":"0.412260845","4":"0.13033618","5":"2554.573","6":"0.04055846","7":"0.783963226","8":"3.16305764","9":"1.965372e-02","_rn_":"15"},{"1":"remember - understand","2":"icp","3":"-0.168539326","4":"0.12956770","5":"2554.376","6":"-0.53805013","7":"0.200971475","8":"-1.30078194","9":"7.847502e-01","_rn_":"16"},{"1":"remember - analyze","2":"icp","3":"0.130717571","4":"0.12923854","5":"2554.972","6":"-0.23785443","7":"0.499289571","8":"1.01144422","9":"9.142810e-01","_rn_":"17"},{"1":"remember - apply","2":"icp","3":"-0.179775281","4":"0.12956770","5":"2554.376","6":"-0.54928608","7":"0.189735520","8":"-1.38750074","9":"7.346596e-01","_rn_":"18"},{"1":"remember - evaluate","2":"icp","3":"0.462647834","4":"0.12961184","5":"2555.070","6":"0.09301123","7":"0.832284440","8":"3.56948742","9":"4.895834e-03","_rn_":"19"},{"1":"remember - create","2":"icp","3":"1.074273794","4":"0.12994729","5":"2554.462","6":"0.70368047","7":"1.444867116","8":"8.26699673","9":"0.000000e+00","_rn_":"20"},{"1":"understand - analyze","2":"icp","3":"0.299256897","4":"0.12923854","5":"2554.972","6":"-0.06931510","7":"0.667828897","8":"2.31553919","9":"1.880395e-01","_rn_":"21"},{"1":"understand - apply","2":"icp","3":"-0.011235955","4":"0.12956770","5":"2554.376","6":"-0.38074676","7":"0.358274846","8":"-0.08671880","9":"9.999993e-01","_rn_":"22"},{"1":"understand - evaluate","2":"icp","3":"0.631187160","4":"0.12961184","5":"2555.070","6":"0.26155055","7":"1.000823766","8":"4.86982637","9":"1.751523e-05","_rn_":"23"},{"1":"understand - create","2":"icp","3":"1.242813120","4":"0.12994729","5":"2554.462","6":"0.87221980","7":"1.613406442","8":"9.56397899","9":"0.000000e+00","_rn_":"24"},{"1":"analyze - apply","2":"icp","3":"-0.310492852","4":"0.12923854","5":"2554.972","6":"-0.67906485","7":"0.058079149","8":"-2.40247886","9":"1.556321e-01","_rn_":"25"},{"1":"analyze - evaluate","2":"icp","3":"0.331930264","4":"0.12921951","5":"2554.467","6":"-0.03658753","7":"0.700448055","8":"2.56873181","9":"1.054025e-01","_rn_":"26"},{"1":"analyze - create","2":"icp","3":"0.943556223","4":"0.12961904","5":"2555.058","6":"0.57389909","7":"1.313213358","8":"7.27945703","9":"0.000000e+00","_rn_":"27"},{"1":"apply - evaluate","2":"icp","3":"0.642423115","4":"0.12961184","5":"2555.070","6":"0.27278651","7":"1.012059721","8":"4.95651564","9":"1.132427e-05","_rn_":"28"},{"1":"apply - create","2":"icp","3":"1.254049075","4":"0.12994729","5":"2554.462","6":"0.88345575","7":"1.624642397","8":"9.65044448","9":"0.000000e+00","_rn_":"29"},{"1":"evaluate - create","2":"icp","3":"0.611625959","4":"0.12999152","5":"2555.159","6":"0.24090655","7":"0.982345367","8":"4.70512181","9":"3.930652e-05","_rn_":"30"},{"1":"remember - understand","2":"hw","3":"-0.067421691","4":"0.12923854","5":"2554.972","6":"-0.43599369","7":"0.301150310","8":"-0.52168411","9":"9.953365e-01","_rn_":"31"},{"1":"remember - analyze","2":"hw","3":"0.121737035","4":"0.12922040","5":"2554.481","6":"-0.24678328","7":"0.490257353","8":"0.94208839","9":"9.355244e-01","_rn_":"32"},{"1":"remember - apply","2":"hw","3":"-0.269668882","4":"0.12923854","5":"2554.972","6":"-0.63824088","7":"0.098903119","8":"-2.08659807","9":"2.945491e-01","_rn_":"33"},{"1":"remember - evaluate","2":"hw","3":"0.428934009","4":"0.12921951","5":"2554.467","6":"0.06041622","7":"0.797451800","8":"3.31942144","9":"1.177317e-02","_rn_":"34"},{"1":"remember - create","2":"hw","3":"0.963779167","4":"0.13000682","5":"2555.135","6":"0.59301614","7":"1.334542192","8":"7.41329707","9":"0.000000e+00","_rn_":"35"},{"1":"understand - analyze","2":"hw","3":"0.189158726","4":"0.12961271","5":"2555.083","6":"-0.18048035","7":"0.558797798","8":"1.45941499","9":"6.902655e-01","_rn_":"36"},{"1":"understand - apply","2":"hw","3":"-0.202247191","4":"0.12956770","5":"2554.376","6":"-0.57175799","7":"0.167263610","8":"-1.56093833","9":"6.245147e-01","_rn_":"37"},{"1":"understand - evaluate","2":"hw","3":"0.496355700","4":"0.12961184","5":"2555.070","6":"0.12671909","7":"0.865992306","8":"3.82955521","9":"1.826894e-03","_rn_":"38"},{"1":"understand - create","2":"hw","3":"1.031200858","4":"0.13033405","5":"2554.545","6":"0.65950455","7":"1.402897162","8":"7.91198373","9":"0.000000e+00","_rn_":"39"},{"1":"analyze - apply","2":"hw","3":"-0.391405917","4":"0.12961271","5":"2555.083","6":"-0.76104499","7":"-0.021766844","8":"-3.01981132","9":"3.064791e-02","_rn_":"40"},{"1":"analyze - evaluate","2":"hw","3":"0.307196974","4":"0.12959324","5":"2554.575","6":"-0.06238663","7":"0.676780581","8":"2.37047070","9":"1.670542e-01","_rn_":"41"},{"1":"analyze - create","2":"hw","3":"0.842042132","4":"0.13037941","5":"2555.249","6":"0.47021653","7":"1.213867734","8":"6.45839799","9":"1.517888e-09","_rn_":"42"},{"1":"apply - evaluate","2":"hw","3":"0.698602891","4":"0.12961184","5":"2555.070","6":"0.32896628","7":"1.068239497","8":"5.38996195","9":"1.146760e-06","_rn_":"43"},{"1":"apply - create","2":"hw","3":"1.233448049","4":"0.13033405","5":"2554.545","6":"0.86175174","7":"1.605144353","8":"9.46374396","9":"0.000000e+00","_rn_":"44"},{"1":"evaluate - create","2":"hw","3":"0.534845158","4":"0.13037851","5":"2555.236","6":"0.16302213","7":"0.906668186","8":"4.10224940","9":"6.013373e-04","_rn_":"45"},{"1":"remember - understand","2":"pbl","3":"-0.303370787","4":"0.09161820","5":"2554.376","6":"-0.56465438","7":"-0.042087193","8":"-3.31125024","9":"1.210116e-02","_rn_":"46"},{"1":"remember - analyze","2":"pbl","3":"-0.696210607","4":"0.09189695","5":"2554.588","6":"-0.95828916","7":"-0.434132057","8":"-7.57599215","9":"0.000000e+00","_rn_":"47"},{"1":"remember - apply","2":"pbl","3":"-0.758426966","4":"0.09161820","5":"2554.376","6":"-1.01971056","7":"-0.497143373","8":"-8.27812560","9":"0.000000e+00","_rn_":"48"},{"1":"remember - evaluate","2":"pbl","3":"-0.752808989","4":"0.09161820","5":"2554.376","6":"-1.01409258","7":"-0.491525396","8":"-8.21680615","9":"0.000000e+00","_rn_":"49"},{"1":"remember - create","2":"pbl","3":"-0.954426000","4":"0.09140754","5":"2555.566","6":"-1.21510871","7":"-0.693743287","8":"-10.44143674","9":"0.000000e+00","_rn_":"50"},{"1":"understand - analyze","2":"pbl","3":"-0.392839821","4":"0.09189695","5":"2554.588","6":"-0.65491837","7":"-0.130761271","8":"-4.27478606","9":"2.860354e-04","_rn_":"51"},{"1":"understand - apply","2":"pbl","3":"-0.455056180","4":"0.09161820","5":"2554.376","6":"-0.71633977","7":"-0.193772587","8":"-4.96687536","9":"1.074410e-05","_rn_":"52"},{"1":"understand - evaluate","2":"pbl","3":"-0.449438202","4":"0.09161820","5":"2554.376","6":"-0.71072180","7":"-0.188154609","8":"-4.90555591","9":"1.464685e-05","_rn_":"53"},{"1":"understand - create","2":"pbl","3":"-0.651055213","4":"0.09140754","5":"2555.566","6":"-0.91173793","7":"-0.390372501","8":"-7.12255515","9":"0.000000e+00","_rn_":"54"},{"1":"analyze - apply","2":"pbl","3":"-0.062216359","4":"0.09189695","5":"2554.588","6":"-0.32429491","7":"0.199862191","8":"-0.67702308","9":"9.844824e-01","_rn_":"55"},{"1":"analyze - evaluate","2":"pbl","3":"-0.056598381","4":"0.09189695","5":"2554.588","6":"-0.31867693","7":"0.205480169","8":"-0.61588963","9":"9.899105e-01","_rn_":"56"},{"1":"analyze - create","2":"pbl","3":"-0.258215392","4":"0.09168682","5":"2555.776","6":"-0.51969457","7":"0.003263786","8":"-2.81627604","9":"5.522019e-02","_rn_":"57"},{"1":"apply - evaluate","2":"pbl","3":"0.005617978","4":"0.09161820","5":"2554.376","6":"-0.25566562","7":"0.266901571","8":"0.06131945","9":"9.999999e-01","_rn_":"58"},{"1":"apply - create","2":"pbl","3":"-0.195999033","4":"0.09140754","5":"2555.566","6":"-0.45668175","7":"0.064683679","8":"-2.14423277","9":"2.648813e-01","_rn_":"59"},{"1":"evaluate - create","2":"pbl","3":"-0.201617011","4":"0.09140754","5":"2555.566","6":"-0.46229972","7":"0.059065702","8":"-2.20569354","9":"2.353304e-01","_rn_":"60"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["contrast"],"name":[1],"type":["fct"],"align":["left"]},{"label":["task"],"name":[2],"type":["fct"],"align":["left"]},{"label":["estimate"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["SE"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["df"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["asymp.LCL"],"name":[6],"type":["dbl"],"align":["right"]},{"label":["asymp.UCL"],"name":[7],"type":["dbl"],"align":["right"]},{"label":["z.ratio"],"name":[8],"type":["dbl"],"align":["right"]},{"label":["p.value"],"name":[9],"type":["dbl"],"align":["right"]}],"data":[{"1":"remember - understand","2":"lec","3":"-0.24618133","4":"0.12915368","5":"Inf","6":"-0.680620772","7":"0.18825810","8":"-1.9061117","9":"3.982570e-01","_rn_":"1"},{"1":"remember - analyze","2":"lec","3":"0.66916038","4":"0.14167986","5":"Inf","6":"0.192586114","7":"1.14573465","8":"4.7230452","9":"3.422145e-05","_rn_":"2"},{"1":"remember - apply","2":"lec","3":"0.62048624","4":"0.13997536","5":"Inf","6":"0.149645469","7":"1.09132701","8":"4.4328247","9":"1.354372e-04","_rn_":"3"},{"1":"remember - evaluate","2":"lec","3":"0.96403379","4":"0.14154750","5":"Inf","6":"0.487904755","7":"1.44016282","8":"6.8106735","9":"1.457202e-10","_rn_":"4"},{"1":"remember - create","2":"lec","3":"1.43216788","4":"0.14176428","5":"Inf","6":"0.955309642","7":"1.90902612","8":"10.1024593","9":"6.272760e-14","_rn_":"5"},{"1":"understand - analyze","2":"lec","3":"0.91534172","4":"0.13446722","5":"Inf","6":"0.463028901","7":"1.36765453","8":"6.8071737","9":"1.493067e-10","_rn_":"6"},{"1":"understand - apply","2":"lec","3":"0.86666757","4":"0.13259037","5":"Inf","6":"0.420668006","7":"1.31266714","8":"6.5364295","9":"9.446609e-10","_rn_":"7"},{"1":"understand - evaluate","2":"lec","3":"1.21021512","4":"0.13434353","5":"Inf","6":"0.758318367","7":"1.66211188","8":"9.0083618","9":"4.019007e-14","_rn_":"8"},{"1":"understand - create","2":"lec","3":"1.67834921","4":"0.13436012","5":"Inf","6":"1.226396650","7":"2.13030178","8":"12.4914238","9":"0.000000e+00","_rn_":"9"},{"1":"analyze - apply","2":"lec","3":"-0.04867414","4":"0.14384144","5":"Inf","6":"-0.532519409","7":"0.43517112","8":"-0.3383875","9":"9.994169e-01","_rn_":"10"},{"1":"analyze - evaluate","2":"lec","3":"0.29487341","4":"0.14525219","5":"Inf","6":"-0.193717255","7":"0.78346407","8":"2.0300789","9":"3.250803e-01","_rn_":"11"},{"1":"analyze - create","2":"lec","3":"0.76300750","4":"0.14568401","5":"Inf","6":"0.272964306","7":"1.25305069","8":"5.2374141","9":"2.425070e-06","_rn_":"12"},{"1":"apply - evaluate","2":"lec","3":"0.34354755","4":"0.14369448","5":"Inf","6":"-0.139803382","7":"0.82689848","8":"2.3908194","9":"1.593213e-01","_rn_":"13"},{"1":"apply - create","2":"lec","3":"0.81168164","4":"0.14412822","5":"Inf","6":"0.326871741","7":"1.29649154","8":"5.6316637","9":"2.668245e-07","_rn_":"14"},{"1":"evaluate - create","2":"lec","3":"0.46813409","4":"0.14538614","5":"Inf","6":"-0.020907143","7":"0.95717533","8":"3.2199361","9":"1.619185e-02","_rn_":"15"},{"1":"remember - understand","2":"icp","3":"-0.20346206","4":"0.13285981","5":"Inf","6":"-0.650367977","7":"0.24344385","8":"-1.5314041","9":"6.438760e-01","_rn_":"16"},{"1":"remember - analyze","2":"icp","3":"0.10942624","4":"0.13543098","5":"Inf","6":"-0.346128424","7":"0.56498091","8":"0.8079853","9":"9.661724e-01","_rn_":"17"},{"1":"remember - apply","2":"icp","3":"-0.22736090","4":"0.13090869","5":"Inf","6":"-0.667703736","7":"0.21298193","8":"-1.7367900","9":"5.072411e-01","_rn_":"18"},{"1":"remember - evaluate","2":"icp","3":"0.44565721","4":"0.14130518","5":"Inf","6":"-0.029656735","7":"0.92097115","8":"3.1538632","9":"2.004168e-02","_rn_":"19"},{"1":"remember - create","2":"icp","3":"1.11615239","4":"0.14292951","5":"Inf","6":"0.635374622","7":"1.59693017","8":"7.8091108","9":"1.212364e-13","_rn_":"20"},{"1":"understand - analyze","2":"icp","3":"0.31288831","4":"0.13133597","5":"Inf","6":"-0.128891810","7":"0.75466842","8":"2.3823504","9":"1.623430e-01","_rn_":"21"},{"1":"understand - apply","2":"icp","3":"-0.02389884","4":"0.12631051","5":"Inf","6":"-0.448774611","7":"0.40097694","8":"-0.1892070","9":"9.999667e-01","_rn_":"22"},{"1":"understand - evaluate","2":"icp","3":"0.64911927","4":"0.13747968","5":"Inf","6":"0.186673312","7":"1.11156523","8":"4.7215651","9":"3.446987e-05","_rn_":"23"},{"1":"understand - create","2":"icp","3":"1.31961446","4":"0.13921240","5":"Inf","6":"0.851340077","7":"1.78788884","8":"9.4791443","9":"5.195844e-14","_rn_":"24"},{"1":"analyze - apply","2":"icp","3":"-0.33678714","4":"0.12930153","5":"Inf","6":"-0.771723921","7":"0.09814963","8":"-2.6046648","9":"9.604954e-02","_rn_":"25"},{"1":"analyze - evaluate","2":"icp","3":"0.33623096","4":"0.13952557","5":"Inf","6":"-0.133096846","7":"0.80555877","8":"2.4098160","9":"1.526930e-01","_rn_":"26"},{"1":"analyze - create","2":"icp","3":"1.00672615","4":"0.14130630","5":"Inf","6":"0.531408441","7":"1.48204386","8":"7.1244250","9":"1.571798e-11","_rn_":"27"},{"1":"apply - evaluate","2":"icp","3":"0.67301811","4":"0.13557671","5":"Inf","6":"0.216973264","7":"1.12906295","8":"4.9641131","9":"1.022958e-05","_rn_":"28"},{"1":"apply - create","2":"icp","3":"1.34351330","4":"0.13734576","5":"Inf","6":"0.881517802","7":"1.80550879","8":"9.7819784","9":"6.461498e-14","_rn_":"29"},{"1":"evaluate - create","2":"icp","3":"0.67049519","4":"0.14659337","5":"Inf","6":"0.177393147","7":"1.16359723","8":"4.5738438","9":"7.016206e-05","_rn_":"30"},{"1":"remember - understand","2":"hw","3":"-0.08031041","4":"0.12281557","5":"Inf","6":"-0.493430095","7":"0.33280927","8":"-0.6539107","9":"9.867519e-01","_rn_":"31"},{"1":"remember - analyze","2":"hw","3":"0.11569752","4":"0.12700664","5":"Inf","6":"-0.311519837","7":"0.54291487","8":"0.9109565","9":"9.438654e-01","_rn_":"32"},{"1":"remember - apply","2":"hw","3":"-0.29431523","4":"0.11513638","5":"Inf","6":"-0.681604138","7":"0.09297367","8":"-2.5562313","9":"1.082847e-01","_rn_":"33"},{"1":"remember - evaluate","2":"hw","3":"0.44758931","4":"0.13571584","5":"Inf","6":"-0.008923542","7":"0.90410217","8":"3.2979887","9":"1.250238e-02","_rn_":"34"},{"1":"remember - create","2":"hw","3":"1.03017941","4":"0.14484023","5":"Inf","6":"0.542974486","7":"1.51738432","8":"7.1125227","9":"1.713218e-11","_rn_":"35"},{"1":"understand - analyze","2":"hw","3":"0.19600793","4":"0.12584109","5":"Inf","6":"-0.227288821","7":"0.61930469","8":"1.5575829","9":"6.266717e-01","_rn_":"36"},{"1":"understand - apply","2":"hw","3":"-0.21400482","4":"0.11327903","5":"Inf","6":"-0.595046073","7":"0.16703644","8":"-1.8891830","9":"4.087588e-01","_rn_":"37"},{"1":"understand - evaluate","2":"hw","3":"0.52789973","4":"0.13477648","5":"Inf","6":"0.074546641","7":"0.98125281","8":"3.9168535","9":"1.259816e-03","_rn_":"38"},{"1":"understand - create","2":"hw","3":"1.11048982","4":"0.14403785","5":"Inf","6":"0.625983888","7":"1.59499575","8":"7.7097084","9":"2.248202e-13","_rn_":"39"},{"1":"analyze - apply","2":"hw","3":"-0.41001275","4":"0.11866846","5":"Inf","6":"-0.809182633","7":"-0.01084287","8":"-3.4551115","9":"7.271602e-03","_rn_":"40"},{"1":"analyze - evaluate","2":"hw","3":"0.33189179","4":"0.13808354","5":"Inf","6":"-0.132585374","7":"0.79636896","8":"2.4035580","9":"1.548538e-01","_rn_":"41"},{"1":"analyze - create","2":"hw","3":"0.91448189","4":"0.14698141","5":"Inf","6":"0.420074595","7":"1.40888918","8":"6.2217522","9":"7.367409e-09","_rn_":"42"},{"1":"apply - evaluate","2":"hw","3":"0.74190455","4":"0.12871733","5":"Inf","6":"0.308932856","7":"1.17487624","8":"5.7638278","9":"1.230258e-07","_rn_":"43"},{"1":"apply - create","2":"hw","3":"1.32449464","4":"0.13864476","5":"Inf","6":"0.858129664","7":"1.79085961","8":"9.5531533","9":"4.751755e-14","_rn_":"44"},{"1":"evaluate - create","2":"hw","3":"0.58259009","4":"0.15381350","5":"Inf","6":"0.065201400","7":"1.09997879","8":"3.7876394","9":"2.106777e-03","_rn_":"45"},{"1":"remember - understand","2":"pbl","3":"-0.29592127","4":"0.10293282","5":"Inf","6":"-0.642160567","7":"0.05031802","8":"-2.8748971","9":"4.655380e-02","_rn_":"46"},{"1":"remember - analyze","2":"pbl","3":"-0.73567854","4":"0.10086419","5":"Inf","6":"-1.074959498","7":"-0.39639758","8":"-7.2937532","9":"4.562573e-12","_rn_":"47"},{"1":"remember - apply","2":"pbl","3":"-0.82973780","4":"0.10020746","5":"Inf","6":"-1.166809661","7":"-0.49266594","8":"-8.2802003","9":"6.827872e-14","_rn_":"48"},{"1":"remember - evaluate","2":"pbl","3":"-0.81545730","4":"0.10086417","5":"Inf","6":"-1.154738180","7":"-0.47617643","8":"-8.0847075","9":"8.471002e-14","_rn_":"49"},{"1":"remember - create","2":"pbl","3":"-1.06287620","4":"0.09847756","5":"Inf","6":"-1.394129148","7":"-0.73162324","8":"-10.7930799","9":"5.617729e-14","_rn_":"50"},{"1":"understand - analyze","2":"pbl","3":"-0.43975726","4":"0.09849182","5":"Inf","6":"-0.771058167","7":"-0.10845636","8":"-4.4649116","9":"1.168219e-04","_rn_":"51"},{"1":"understand - apply","2":"pbl","3":"-0.53381652","4":"0.09780208","5":"Inf","6":"-0.862797335","7":"-0.20483571","8":"-5.4581305","9":"7.183600e-07","_rn_":"52"},{"1":"understand - evaluate","2":"pbl","3":"-0.51953603","4":"0.09840932","5":"Inf","6":"-0.850559425","7":"-0.18851263","8":"-5.2793377","9":"1.931855e-06","_rn_":"53"},{"1":"understand - create","2":"pbl","3":"-0.76695492","4":"0.09589125","5":"Inf","6":"-1.089508176","7":"-0.44440167","8":"-7.9981745","9":"9.980905e-14","_rn_":"54"},{"1":"analyze - apply","2":"pbl","3":"-0.09405926","4":"0.09457724","5":"Inf","6":"-0.412192531","7":"0.22407401","8":"-0.9945233","9":"9.198657e-01","_rn_":"55"},{"1":"analyze - evaluate","2":"pbl","3":"-0.07977877","4":"0.09521323","5":"Inf","6":"-0.400051341","7":"0.24049381","8":"-0.8378958","9":"9.604739e-01","_rn_":"56"},{"1":"analyze - create","2":"pbl","3":"-0.32719766","4":"0.09196670","5":"Inf","6":"-0.636549764","7":"-0.01784555","8":"-3.5577840","9":"5.026083e-03","_rn_":"57"},{"1":"apply - evaluate","2":"pbl","3":"0.01428050","4":"0.09433325","5":"Inf","6":"-0.303032073","7":"0.33159307","8":"0.1513835","9":"9.999890e-01","_rn_":"58"},{"1":"apply - create","2":"pbl","3":"-0.23313840","4":"0.09074085","5":"Inf","6":"-0.538367052","7":"0.07209026","8":"-2.5692772","9":"1.048751e-01","_rn_":"59"},{"1":"evaluate - create","2":"pbl","3":"-0.24741889","4":"0.09145698","5":"Inf","6":"-0.555056438","7":"0.06021865","8":"-2.7053035","9":"7.414365e-02","_rn_":"60"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
   </script>
 </div>
 <p>(Surprisingly, there don’t exist any simple packages to transform this output into a neater table–I think we’d have to do it ourselves.)</p>
-<p>The first table is the <a href="https://www.theanalysisfactor.com/why-report-estimated-marginal-means-in-spss-glm/">marginal means</a>, which enhances bare-bones descriptive statistics by accounting for imbalances in data. This is huge, because our mass data has double the <code>pbl</code> observations of the other categories. This method also helps with the imbalance from missing data, but that is a trivial concern compared to the double-PBL issue.</p>
+<p>The first table is the estimated marginal means <a href="https://www.theanalysisfactor.com/why-report-estimated-marginal-means-in-spss-glm/">(EMM)</a>, which enhances bare-bones descriptive statistics by accounting for imbalances in data. This is huge, because our mass data has double the <code>pbl</code> observations of the other categories. This method also helps with the imbalance from missing data, but that is a trivial concern compared to the double-PBL issue.</p>
 <p>The second table output contains the pairwise contrasts between each level for a particular task, with the <span class="math inline">\(\alpha\)</span> = 0.05 p-value, associated 95% confidence interval, and Tukey family-wise adjustment.</p>
-<p>This is messier than our previous output, but displays similar effects which lead to similar interpretations. It isn’t nearly as parsimonious as “these 3 coefficients are negative, but PBL is the only positive one!” However, examine the <code>lec</code> contrasts and you can see ample compr</p>
-<pre class="r"><code>kinetics_lmm &lt;- lmer(rating ~ blooms_level * task + (1 | year/student_id), data = kinetics)
+</div>
+<div id="my-thoughts" class="section level2">
+<h2>My Thoughts</h2>
+<p>This is messier than our previous output, but displays similar effects which lead to similar interpretations. It isn’t nearly as parsimonious as “these 3 coefficients are negative, but PBL is the only positive one!” However, examine the <code>lec</code> contrasts and you can see ample comparisons which estimate <code>Remember</code> and <code>Understand</code> well below the higher levels, with significance. Conversely, these same comparisons have negative estimated effects for <code>pbl</code>, indicating a significant difference in the opposite direction. Middle Bloom’s Levels are hazier to tease apart, as they were before, but you can see the clear stratification between <code>lec</code> <code>-&gt;</code> <code>hw/icp</code> <code>-&gt;</code> <code>pbl</code>, in my opinion.</p>
+</div>
+</div>
+<div id="kinetics-analysis" class="section level1">
+<h1>Kinetics Analysis</h1>
+<div id="omnibus-anova-1" class="section level2">
+<h2>Omnibus ANOVA</h2>
+<p>Here is the same procedure for kinetics. Starting with model fitting and the omnibus ANOVA:</p>
+<pre class="r"><code>kinetics &lt;- kinetics %&gt;%
+  mutate(rating = factor(rating, ordered = TRUE))
 
-anova(kinetics_lmm)</code></pre>
+kinetics_clmm &lt;- clmm(rating ~ blooms_level * task + year + (1 | student_id), data = kinetics)
+
+summary(kinetics_clmm)</code></pre>
+<pre><code>## Cumulative Link Mixed Model fitted with the Laplace approximation
+## 
+## formula: rating ~ blooms_level * task + year + (1 | student_id)
+## data:    kinetics
+## 
+##  link  threshold nobs logLik   AIC     niter       max.grad cond.H 
+##  logit flexible  2141 -2586.52 5231.04 4475(22349) 1.84e-03 8.4e+02
+## 
+## Random effects:
+##  Groups     Name        Variance Std.Dev.
+##  student_id (Intercept) 2.409    1.552   
+## Number of groups:  student_id 90 
+## 
+## Coefficients:
+##                                Estimate Std. Error z value Pr(&gt;|z|)    
+## blooms_levelunderstand           0.0259     0.2866   0.090 0.927999    
+## blooms_levelanalyze             -1.0350     0.2799  -3.698 0.000217 ***
+## blooms_levelapply               -1.0260     0.2782  -3.688 0.000226 ***
+## blooms_levelevaluate            -1.6599     0.2812  -5.902 3.59e-09 ***
+## blooms_levelcreate              -2.3911     0.2881  -8.300  &lt; 2e-16 ***
+## taskicp                          0.1406     0.2818   0.499 0.617743    
+## taskhw                           0.5414     0.2938   1.843 0.065355 .  
+## taskpbl                         -0.5729     0.2943  -1.946 0.051609 .  
+## year2020                        -0.7565     0.3397  -2.227 0.025940 *  
+## blooms_levelunderstand:taskicp   0.2168     0.4000   0.542 0.587930    
+## blooms_levelanalyze:taskicp      0.5714     0.3913   1.460 0.144277    
+## blooms_levelapply:taskicp        1.0087     0.3931   2.566 0.010281 *  
+## blooms_levelevaluate:taskicp     0.4311     0.3907   1.103 0.269816    
+## blooms_levelcreate:taskicp       0.2486     0.3970   0.626 0.531183    
+## blooms_levelunderstand:taskhw   -0.0702     0.4124  -0.170 0.864829    
+## blooms_levelanalyze:taskhw       0.7228     0.4046   1.787 0.073981 .  
+## blooms_levelapply:taskhw         1.4440     0.4086   3.534 0.000410 ***
+## blooms_levelevaluate:taskhw      0.7946     0.4048   1.963 0.049668 *  
+## blooms_levelcreate:taskhw        0.4822     0.4093   1.178 0.238674    
+## blooms_levelunderstand:taskpbl   0.0342     0.4137   0.083 0.934122    
+## blooms_levelanalyze:taskpbl      2.0617     0.4181   4.931 8.19e-07 ***
+## blooms_levelapply:taskpbl        2.1544     0.4189   5.143 2.70e-07 ***
+## blooms_levelevaluate:taskpbl     2.4275     0.4186   5.799 6.69e-09 ***
+## blooms_levelcreate:taskpbl       3.4622     0.4291   8.068 7.15e-16 ***
+## ---
+## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+## 
+## Threshold coefficients:
+##     Estimate Std. Error z value
+## 1|2  -5.0780     0.3468 -14.644
+## 2|3  -3.1506     0.3276  -9.619
+## 3|4  -1.3550     0.3210  -4.222
+## 4|5   0.5846     0.3199   1.827
+## (19 observations deleted due to missingness)</code></pre>
+<pre class="r"><code>Anova.clmm(kinetics_clmm)</code></pre>
 <div data-pagedtable="false">
 <script data-pagedtable-source type="application/json">
-{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["Sum Sq"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["Mean Sq"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["NumDF"],"name":[3],"type":["int"],"align":["right"]},{"label":["DenDF"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["F value"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["Pr(>F)"],"name":[6],"type":["dbl"],"align":["right"]}],"data":[{"1":"134.99327","2":"26.998653","3":"5","4":"2027.615","5":"37.49213","6":"7.095586e-37","_rn_":"blooms_level"},{"1":"86.79718","2":"28.932392","3":"3","4":"2027.690","5":"40.17745","6":"3.226997e-25","_rn_":"task"},{"1":"112.71213","2":"7.514142","3":"15","4":"2027.676","5":"10.43464","6":"1.360300e-24","_rn_":"blooms_level:task"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["LR Chisq"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["Df"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["Pr(>Chisq)"],"name":[3],"type":["dbl"],"align":["right"]}],"data":[{"1":"164.798979","2":"5","3":"9.386175e-34","_rn_":"blooms_level"},{"1":"113.277897","2":"3","3":"2.161793e-24","_rn_":"task"},{"1":"4.824251","2":"1","3":"2.806206e-02","_rn_":"year"},{"1":"141.596539","2":"15","3":"1.113986e-22","_rn_":"blooms_level:task"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
   </script>
 </div>
-<pre class="r"><code>summary(kinetics_lmm)$coefficients</code></pre>
-<pre><code>##                                     Estimate Std. Error          df
-## (Intercept)                     3.863747e+00  0.1800758    1.728778
-## blooms_levelunderstand          2.737558e-06  0.1268895 2027.818060
-## blooms_levelanalyze            -4.904640e-01  0.1272585 2027.884923
-## blooms_levelapply              -4.777750e-01  0.1268895 2027.818059
-## blooms_levelevaluate           -7.888862e-01  0.1268895 2027.818060
-## blooms_levelcreate             -1.157303e+00  0.1272099 2027.474624
-## taskicp                         7.778052e-02  0.1268895 2027.818060
-## taskhw                          2.271517e-01  0.1272590 2027.895123
-## taskpbl                        -3.033708e-01  0.1272099 2027.474623
-## blooms_levelunderstand:taskicp  1.132280e-01  0.1794962 2028.160557
-## blooms_levelanalyze:taskicp     3.003240e-01  0.1797578 2028.195898
-## blooms_levelapply:taskicp       4.786462e-01  0.1794962 2028.160556
-## blooms_levelevaluate:taskicp    1.999973e-01  0.1791745 2027.646941
-## blooms_levelcreate:taskicp      1.581745e-01  0.1796756 2027.645981
-## blooms_levelunderstand:taskhw  -2.015154e-02  0.1800031 2028.164352
-## blooms_levelanalyze:taskhw      3.756719e-01  0.1800191 2028.238171
-## blooms_levelapply:taskhw        6.551177e-01  0.1797582 2028.203276
-## blooms_levelevaluate:taskhw     4.172927e-01  0.1794364 2027.686238
-## blooms_levelcreate:taskhw       3.337320e-01  0.1802027 2027.717025
-## blooms_levelunderstand:taskpbl  5.617704e-02  0.1796756 2027.645981
-## blooms_levelanalyze:taskpbl     9.061944e-01  0.1799364 2027.679954
-## blooms_levelapply:taskpbl       9.159773e-01  0.1796756 2027.645981
-## blooms_levelevaluate:taskpbl    1.114729e+00  0.1796756 2027.645981
-## blooms_levelcreate:taskpbl      1.560677e+00  0.1796756 2027.645981
-##                                      t value     Pr(&gt;|t|)
-## (Intercept)                     2.145622e+01 4.221540e-03
-## blooms_levelunderstand          2.157434e-05 9.999828e-01
-## blooms_levelanalyze            -3.854077e+00 1.197814e-04
-## blooms_levelapply              -3.765283e+00 1.710967e-04
-## blooms_levelevaluate           -6.217109e+00 6.131092e-10
-## blooms_levelcreate             -9.097587e+00 2.144256e-19
-## taskicp                         6.129781e-01 5.399595e-01
-## taskhw                          1.784956e+00 7.441795e-02
-## taskpbl                        -2.384804e+00 1.717962e-02
-## blooms_levelunderstand:taskicp  6.308097e-01 5.282360e-01
-## blooms_levelanalyze:taskicp     1.670714e+00 9.493244e-02
-## blooms_levelapply:taskicp       2.666608e+00 7.722967e-03
-## blooms_levelevaluate:taskicp    1.116215e+00 2.644625e-01
-## blooms_levelcreate:taskicp      8.803340e-01 3.787827e-01
-## blooms_levelunderstand:taskhw  -1.119510e-01 9.108733e-01
-## blooms_levelanalyze:taskhw      2.086844e+00 3.702681e-02
-## blooms_levelapply:taskhw        3.644439e+00 2.747148e-04
-## blooms_levelevaluate:taskhw     2.325575e+00 2.013945e-02
-## blooms_levelcreate:taskhw       1.851981e+00 6.417379e-02
-## blooms_levelunderstand:taskpbl  3.126581e-01 7.545726e-01
-## blooms_levelanalyze:taskpbl     5.036194e+00 5.168959e-07
-## blooms_levelapply:taskpbl       5.097950e+00 3.752528e-07
-## blooms_levelevaluate:taskpbl    6.204119e+00 6.649314e-10
-## blooms_levelcreate:taskpbl      8.686081e+00 7.577907e-18</code></pre>
+<pre class="r"><code># null model to test significance of fixed effects
+kinetics_null &lt;- clm(rating ~ 1, data = kinetics)
+anova(kinetics_clmm, kinetics_null)</code></pre>
+<div data-pagedtable="false">
+<script data-pagedtable-source type="application/json">
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["no.par"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["AIC"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["logLik"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["LR.stat"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["df"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["Pr(>Chisq)"],"name":[6],"type":["dbl"],"align":["right"]}],"data":[{"1":"4","2":"6261.205","3":"-3126.603","4":"NA","5":"NA","6":"NA","_rn_":"kinetics_null"},{"1":"29","2":"5231.037","3":"-2586.518","4":"1080.169","5":"25","6":"5.505033e-212","_rn_":"kinetics_clmm"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+  </script>
+</div>
+<pre class="r"><code># null model to test significance of random effects
+kinetics_null2 &lt;- clm(rating ~ blooms_level * task + year, data = kinetics)
+anova(kinetics_clmm, kinetics_null2)</code></pre>
+<div data-pagedtable="false">
+<script data-pagedtable-source type="application/json">
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["no.par"],"name":[1],"type":["dbl"],"align":["right"]},{"label":["AIC"],"name":[2],"type":["dbl"],"align":["right"]},{"label":["logLik"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["LR.stat"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["df"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["Pr(>Chisq)"],"name":[6],"type":["dbl"],"align":["right"]}],"data":[{"1":"28","2":"5980.220","3":"-2962.110","4":"NA","5":"NA","6":"NA","_rn_":"kinetics_null2"},{"1":"29","2":"5231.037","3":"-2586.518","4":"751.1833","5":"1","6":"2.218709e-165","_rn_":"kinetics_clmm"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+  </script>
+</div>
+</div>
+<div id="estimated-marginal-means-and-contrasts" class="section level2">
+<h2>Estimated Marginal Means and Contrasts</h2>
+<pre class="r"><code>kinetics_emm &lt;- emmeans(kinetics_clmm, specs = pairwise ~ blooms_level | task, mode = &quot;mean.class&quot;)
+
+kinetics_emm$emmeans %&gt;%
+  summary(infer = TRUE, null = mean(as.numeric(kinetics$rating), na.rm = TRUE), level = 0.99)</code></pre>
+<div data-pagedtable="false">
+<script data-pagedtable-source type="application/json">
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["blooms_level"],"name":[1],"type":["fct"],"align":["left"]},{"label":["task"],"name":[2],"type":["fct"],"align":["left"]},{"label":["mean.class"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["SE"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["df"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["asymp.LCL"],"name":[6],"type":["dbl"],"align":["right"]},{"label":["asymp.UCL"],"name":[7],"type":["dbl"],"align":["right"]},{"label":["null"],"name":[8],"type":["dbl"],"align":["right"]},{"label":["z.ratio"],"name":[9],"type":["dbl"],"align":["right"]},{"label":["p.value"],"name":[10],"type":["dbl"],"align":["right"]}],"data":[{"1":"remember","2":"lec","3":"3.930745","4":"0.1203090","5":"Inf","6":"3.620849","7":"4.240640","8":"3.676787","9":"2.11088037","10":"3.478260e-02","_rn_":"1"},{"1":"understand","2":"lec","3":"3.942653","4":"0.1197116","5":"Inf","6":"3.634297","7":"4.251010","8":"3.676787","9":"2.22089477","10":"2.635809e-02","_rn_":"2"},{"1":"analyze","2":"lec","3":"3.428456","4":"0.1271744","5":"Inf","6":"3.100876","7":"3.756035","8":"3.676787","9":"-1.95267898","10":"5.085765e-02","_rn_":"3"},{"1":"apply","2":"lec","3":"3.433002","4":"0.1261700","5":"Inf","6":"3.108009","7":"3.757994","8":"3.676787","9":"-1.93219468","10":"5.333548e-02","_rn_":"4"},{"1":"evaluate","2":"lec","3":"3.109755","4":"0.1296582","5":"Inf","6":"2.775777","7":"3.443732","8":"3.676787","9":"-4.37328342","10":"1.223917e-05","_rn_":"5"},{"1":"create","2":"lec","3":"2.734075","4":"0.1316336","5":"Inf","6":"2.395010","7":"3.073141","8":"3.676787","9":"-7.16163428","10":"7.972087e-13","_rn_":"6"},{"1":"remember","2":"icp","3":"3.994897","4":"0.1154211","5":"Inf","6":"3.697592","7":"4.292202","8":"3.676787","9":"2.75608648","10":"5.849753e-03","_rn_":"7"},{"1":"understand","2":"icp","3":"4.102485","4":"0.1122423","5":"Inf","6":"3.813368","7":"4.391602","8":"3.676787","9":"3.79267505","10":"1.490331e-04","_rn_":"8"},{"1":"analyze","2":"icp","3":"3.779050","4":"0.1209313","5":"Inf","6":"3.467551","7":"4.090548","8":"3.676787","9":"0.84562961","10":"3.977594e-01","_rn_":"9"},{"1":"apply","2":"icp","3":"3.987046","4":"0.1163300","5":"Inf","6":"3.687399","7":"4.286692","8":"3.676787","9":"2.66705965","10":"7.651809e-03","_rn_":"10"},{"1":"evaluate","2":"icp","3":"3.401635","4":"0.1273660","5":"Inf","6":"3.073562","7":"3.729708","8":"3.676787","9":"-2.16031922","10":"3.074797e-02","_rn_":"11"},{"1":"create","2":"icp","3":"2.933824","4":"0.1323323","5":"Inf","6":"2.592959","7":"3.274690","8":"3.676787","9":"-5.61436879","10":"1.972811e-08","_rn_":"12"},{"1":"remember","2":"hw","3":"4.170200","4":"0.1132198","5":"Inf","6":"3.878565","7":"4.461835","8":"3.676787","9":"4.35801062","10":"1.312500e-05","_rn_":"13"},{"1":"understand","2":"hw","3":"4.151430","4":"0.1126829","5":"Inf","6":"3.861178","7":"4.441682","8":"3.676787","9":"4.21220819","10":"2.528863e-05","_rn_":"14"},{"1":"analyze","2":"hw","3":"4.034649","4":"0.1160283","5":"Inf","6":"3.735780","7":"4.333518","8":"3.676787","9":"3.08426579","10":"2.040552e-03","_rn_":"15"},{"1":"apply","2":"hw","3":"4.338546","4":"0.1020737","5":"Inf","6":"4.075621","7":"4.601470","8":"3.676787","9":"6.48314787","10":"8.982838e-11","_rn_":"16"},{"1":"evaluate","2":"hw","3":"3.778624","4":"0.1244243","5":"Inf","6":"3.458128","7":"4.099119","8":"3.676787","9":"0.81846814","10":"4.130899e-01","_rn_":"17"},{"1":"create","2":"hw","3":"3.259651","4":"0.1340168","5":"Inf","6":"2.914446","7":"3.604855","8":"3.676787","9":"-3.11256358","10":"1.854701e-03","_rn_":"18"},{"1":"remember","2":"pbl","3":"3.658215","4":"0.1314846","5":"Inf","6":"3.319534","7":"3.996897","8":"3.676787","9":"-0.14124163","10":"8.876791e-01","_rn_":"19"},{"1":"understand","2":"pbl","3":"3.687531","4":"0.1297378","5":"Inf","6":"3.353349","7":"4.021714","8":"3.676787","9":"0.08281912","10":"9.339954e-01","_rn_":"20"},{"1":"analyze","2":"pbl","3":"4.132957","4":"0.1193293","5":"Inf","6":"3.825585","7":"4.440329","8":"3.676787","9":"3.82278639","10":"1.319521e-04","_rn_":"21"},{"1":"apply","2":"pbl","3":"4.176179","4":"0.1180029","5":"Inf","6":"3.872224","7":"4.480134","8":"3.676787","9":"4.23203566","10":"2.315857e-05","_rn_":"22"},{"1":"evaluate","2":"pbl","3":"4.019233","4":"0.1243638","5":"Inf","6":"3.698893","7":"4.339573","8":"3.676787","9":"2.75358284","10":"5.894685e-03","_rn_":"23"},{"1":"create","2":"pbl","3":"4.151926","4":"0.1208931","5":"Inf","6":"3.840526","7":"4.463326","8":"3.676787","9":"3.93024237","10":"8.486028e-05","_rn_":"24"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+  </script>
+</div>
+<pre class="r"><code>kinetics_emm$contrasts %&gt;%
+  summary(infer = TRUE, level = 0.99)</code></pre>
+<div data-pagedtable="false">
+<script data-pagedtable-source type="application/json">
+{"columns":[{"label":[""],"name":["_rn_"],"type":[""],"align":["left"]},{"label":["contrast"],"name":[1],"type":["fct"],"align":["left"]},{"label":["task"],"name":[2],"type":["fct"],"align":["left"]},{"label":["estimate"],"name":[3],"type":["dbl"],"align":["right"]},{"label":["SE"],"name":[4],"type":["dbl"],"align":["right"]},{"label":["df"],"name":[5],"type":["dbl"],"align":["right"]},{"label":["asymp.LCL"],"name":[6],"type":["dbl"],"align":["right"]},{"label":["asymp.UCL"],"name":[7],"type":["dbl"],"align":["right"]},{"label":["z.ratio"],"name":[8],"type":["dbl"],"align":["right"]},{"label":["p.value"],"name":[9],"type":["dbl"],"align":["right"]}],"data":[{"1":"remember - understand","2":"lec","3":"-0.011908825","4":"0.1317907","5":"Inf","6":"-0.455218551","7":"0.431400901","8":"-0.09036164","9":"9.999992e-01","_rn_":"1"},{"1":"remember - analyze","2":"lec","3":"0.502288753","4":"0.1346194","5":"Inf","6":"0.049464039","7":"0.955113466","8":"3.73117656","9":"2.622541e-03","_rn_":"2"},{"1":"remember - apply","2":"lec","3":"0.497742881","4":"0.1337270","5":"Inf","6":"0.047919994","7":"0.947565769","8":"3.72208234","9":"2.715803e-03","_rn_":"3"},{"1":"remember - evaluate","2":"lec","3":"0.820989920","4":"0.1362039","5":"Inf","6":"0.362835372","7":"1.279144469","8":"6.02765365","9":"2.491689e-08","_rn_":"4"},{"1":"remember - create","2":"lec","3":"1.196669344","4":"0.1382385","5":"Inf","6":"0.731671074","7":"1.661667614","8":"8.65655906","9":"5.073719e-14","_rn_":"5"},{"1":"understand - analyze","2":"lec","3":"0.514197578","4":"0.1343429","5":"Inf","6":"0.062302994","7":"0.966092162","8":"3.82750140","9":"1.801220e-03","_rn_":"6"},{"1":"understand - apply","2":"lec","3":"0.509651707","4":"0.1333985","5":"Inf","6":"0.060933625","7":"0.958369789","8":"3.82051914","9":"1.851573e-03","_rn_":"7"},{"1":"understand - evaluate","2":"lec","3":"0.832898746","4":"0.1358699","5":"Inf","6":"0.375867575","7":"1.289929916","8":"6.13011829","9":"1.315656e-08","_rn_":"8"},{"1":"understand - create","2":"lec","3":"1.208578169","4":"0.1380319","5":"Inf","6":"0.744274556","7":"1.672881783","8":"8.75578622","9":"4.718448e-14","_rn_":"9"},{"1":"analyze - apply","2":"lec","3":"-0.004545871","4":"0.1355213","5":"Inf","6":"-0.460404484","7":"0.451312741","8":"-0.03354358","9":"1.000000e+00","_rn_":"10"},{"1":"analyze - evaluate","2":"lec","3":"0.318701168","4":"0.1378419","5":"Inf","6":"-0.144963253","7":"0.782365589","8":"2.31207731","9":"1.890224e-01","_rn_":"11"},{"1":"analyze - create","2":"lec","3":"0.694380591","4":"0.1399299","5":"Inf","6":"0.223692758","7":"1.165068425","8":"4.96234630","9":"1.032271e-05","_rn_":"12"},{"1":"apply - evaluate","2":"lec","3":"0.323247039","4":"0.1369994","5":"Inf","6":"-0.137583510","7":"0.784077588","8":"2.35947707","9":"1.707108e-01","_rn_":"13"},{"1":"apply - create","2":"lec","3":"0.698926462","4":"0.1391277","5":"Inf","6":"0.230936989","7":"1.166915936","8":"5.02363257","9":"7.524424e-06","_rn_":"14"},{"1":"evaluate - create","2":"lec","3":"0.375679423","4":"0.1411344","5":"Inf","6":"-0.099060112","7":"0.850418959","8":"2.66185550","9":"8.304318e-02","_rn_":"15"},{"1":"remember - understand","2":"icp","3":"-0.107588218","4":"0.1236614","5":"Inf","6":"-0.523552930","7":"0.308376494","8":"-0.87002292","9":"9.536533e-01","_rn_":"16"},{"1":"remember - analyze","2":"icp","3":"0.215847386","4":"0.1275820","5":"Inf","6":"-0.213305174","7":"0.644999946","8":"1.69183324","9":"5.371743e-01","_rn_":"17"},{"1":"remember - apply","2":"icp","3":"0.007851359","4":"0.1256470","5":"Inf","6":"-0.414792537","7":"0.430495255","8":"0.06248744","9":"9.999999e-01","_rn_":"18"},{"1":"remember - evaluate","2":"icp","3":"0.593261726","4":"0.1313064","5":"Inf","6":"0.151581052","7":"1.034942401","8":"4.51814746","9":"9.119547e-05","_rn_":"19"},{"1":"remember - create","2":"icp","3":"1.061072617","4":"0.1352610","5":"Inf","6":"0.606089769","7":"1.516055466","8":"7.84463153","9":"1.538769e-13","_rn_":"20"},{"1":"understand - analyze","2":"icp","3":"0.323435604","4":"0.1264378","5":"Inf","6":"-0.101868245","7":"0.748739454","8":"2.55806149","9":"1.078013e-01","_rn_":"21"},{"1":"understand - apply","2":"icp","3":"0.115439577","4":"0.1243943","5":"Inf","6":"-0.302990485","7":"0.533869640","8":"0.92801355","9":"9.394116e-01","_rn_":"22"},{"1":"understand - evaluate","2":"icp","3":"0.700849945","4":"0.1303511","5":"Inf","6":"0.262382764","7":"1.139317126","8":"5.37663332","9":"1.132091e-06","_rn_":"23"},{"1":"understand - create","2":"icp","3":"1.168660836","4":"0.1343530","5":"Inf","6":"0.716732379","7":"1.620589293","8":"8.69843794","9":"4.896084e-14","_rn_":"24"},{"1":"analyze - apply","2":"icp","3":"-0.207996027","4":"0.1281766","5":"Inf","6":"-0.639148877","7":"0.223156823","8":"-1.62272993","9":"5.833781e-01","_rn_":"25"},{"1":"analyze - evaluate","2":"icp","3":"0.377414340","4":"0.1334395","5":"Inf","6":"-0.071441326","7":"0.826270006","8":"2.82835653","9":"5.308658e-02","_rn_":"26"},{"1":"analyze - create","2":"icp","3":"0.845225231","4":"0.1372503","5":"Inf","6":"0.383550705","7":"1.306899758","8":"6.15827400","9":"1.101910e-08","_rn_":"27"},{"1":"apply - evaluate","2":"icp","3":"0.585410367","4":"0.1319609","5":"Inf","6":"0.141528129","7":"1.029292605","8":"4.43624078","9":"1.333286e-04","_rn_":"28"},{"1":"apply - create","2":"icp","3":"1.053221258","4":"0.1358937","5":"Inf","6":"0.596110247","7":"1.510332269","8":"7.75033369","9":"1.723066e-13","_rn_":"29"},{"1":"evaluate - create","2":"icp","3":"0.467810891","4":"0.1402289","5":"Inf","6":"-0.003882558","7":"0.939504340","8":"3.33605308","9":"1.099277e-02","_rn_":"30"},{"1":"remember - understand","2":"hw","3":"0.018769500","4":"0.1256205","5":"Inf","6":"-0.403785149","7":"0.441324148","8":"0.14941434","9":"9.999897e-01","_rn_":"31"},{"1":"remember - analyze","2":"hw","3":"0.135551260","4":"0.1268640","5":"Inf","6":"-0.291186194","7":"0.562288713","8":"1.06847721","9":"8.939589e-01","_rn_":"32"},{"1":"remember - apply","2":"hw","3":"-0.168345885","4":"0.1203905","5":"Inf","6":"-0.573308373","7":"0.236616602","8":"-1.39833162","9":"7.281295e-01","_rn_":"33"},{"1":"remember - evaluate","2":"hw","3":"0.391575991","4":"0.1319278","5":"Inf","6":"-0.052195031","7":"0.835347014","8":"2.96810721","9":"3.550044e-02","_rn_":"34"},{"1":"remember - create","2":"hw","3":"0.910549095","4":"0.1384525","5":"Inf","6":"0.444830757","7":"1.376267433","8":"6.57661616","9":"7.216381e-10","_rn_":"35"},{"1":"understand - analyze","2":"hw","3":"0.116781760","4":"0.1259831","5":"Inf","6":"-0.306992635","7":"0.540556154","8":"0.92696379","9":"9.396922e-01","_rn_":"36"},{"1":"understand - apply","2":"hw","3":"-0.187115385","4":"0.1194858","5":"Inf","6":"-0.589034544","7":"0.214803774","8":"-1.56600540","9":"6.211078e-01","_rn_":"37"},{"1":"understand - evaluate","2":"hw","3":"0.372806492","4":"0.1311029","5":"Inf","6":"-0.068189497","7":"0.813802480","8":"2.84361826","9":"5.086426e-02","_rn_":"38"},{"1":"understand - create","2":"hw","3":"0.891779595","4":"0.1377009","5":"Inf","6":"0.428589659","7":"1.354969532","8":"6.47620942","9":"1.410098e-09","_rn_":"39"},{"1":"analyze - apply","2":"hw","3":"-0.303897145","4":"0.1209500","5":"Inf","6":"-0.710741452","7":"0.102947163","8":"-2.51258547","9":"1.203230e-01","_rn_":"40"},{"1":"analyze - evaluate","2":"hw","3":"0.256024732","4":"0.1319125","5":"Inf","6":"-0.187694561","7":"0.699744024","8":"1.94086834","9":"3.770504e-01","_rn_":"41"},{"1":"analyze - create","2":"hw","3":"0.774997835","4":"0.1383309","5":"Inf","6":"0.309688572","7":"1.240307099","8":"5.60249217","9":"3.158144e-07","_rn_":"42"},{"1":"apply - evaluate","2":"hw","3":"0.559921876","4":"0.1266148","5":"Inf","6":"0.134022503","7":"0.985821250","8":"4.42224604","9":"1.421699e-04","_rn_":"43"},{"1":"apply - create","2":"hw","3":"1.078894980","4":"0.1336757","5":"Inf","6":"0.629244651","7":"1.528545309","8":"8.07098843","9":"8.615331e-14","_rn_":"44"},{"1":"evaluate - create","2":"hw","3":"0.518973104","4":"0.1422494","5":"Inf","6":"0.040483103","7":"0.997463104","8":"3.64833284","9":"3.593404e-03","_rn_":"45"},{"1":"remember - understand","2":"pbl","3":"-0.029315868","4":"0.1454827","5":"Inf","6":"-0.518681741","7":"0.460050005","8":"-0.20150766","9":"9.999545e-01","_rn_":"46"},{"1":"remember - analyze","2":"pbl","3":"-0.474741352","4":"0.1419685","5":"Inf","6":"-0.952286365","7":"0.002803662","8":"-3.34399189","9":"1.069941e-02","_rn_":"47"},{"1":"remember - apply","2":"pbl","3":"-0.517963656","4":"0.1416153","5":"Inf","6":"-0.994320862","7":"-0.041606449","8":"-3.65753942","9":"3.471104e-03","_rn_":"48"},{"1":"remember - evaluate","2":"pbl","3":"-0.361017224","4":"0.1444140","5":"Inf","6":"-0.846788488","7":"0.124754041","8":"-2.49987659","9":"1.240150e-01","_rn_":"49"},{"1":"remember - create","2":"pbl","3":"-0.493710181","4":"0.1435795","5":"Inf","6":"-0.976674354","7":"-0.010746007","8":"-3.43858398","9":"7.708427e-03","_rn_":"50"},{"1":"understand - analyze","2":"pbl","3":"-0.445425484","4":"0.1405338","5":"Inf","6":"-0.918144678","7":"0.027293711","8":"-3.16952580","9":"1.906238e-02","_rn_":"51"},{"1":"understand - apply","2":"pbl","3":"-0.488647787","4":"0.1401729","5":"Inf","6":"-0.960152894","7":"-0.017142681","8":"-3.48603709","9":"6.514198e-03","_rn_":"52"},{"1":"understand - evaluate","2":"pbl","3":"-0.331701356","4":"0.1430033","5":"Inf","6":"-0.812727430","7":"0.149324719","8":"-2.31953589","9":"1.860536e-01","_rn_":"53"},{"1":"understand - create","2":"pbl","3":"-0.464394312","4":"0.1421660","5":"Inf","6":"-0.942603945","7":"0.013815320","8":"-3.26656301","9":"1.388611e-02","_rn_":"54"},{"1":"analyze - apply","2":"pbl","3":"-0.043222304","4":"0.1353845","5":"Inf","6":"-0.498620471","7":"0.412175863","8":"-0.31925602","9":"9.995611e-01","_rn_":"55"},{"1":"analyze - evaluate","2":"pbl","3":"0.113724128","4":"0.1386167","5":"Inf","6":"-0.352546306","7":"0.579994562","8":"0.82042182","9":"9.638774e-01","_rn_":"56"},{"1":"analyze - create","2":"pbl","3":"-0.018968829","4":"0.1375389","5":"Inf","6":"-0.481613982","7":"0.443676324","8":"-0.13791610","9":"9.999931e-01","_rn_":"57"},{"1":"apply - evaluate","2":"pbl","3":"0.156946432","4":"0.1383215","5":"Inf","6":"-0.308331025","7":"0.622223889","8":"1.13464996","9":"8.670348e-01","_rn_":"58"},{"1":"apply - create","2":"pbl","3":"0.024253475","4":"0.1371108","5":"Inf","6":"-0.436951661","7":"0.485458611","8":"0.17688960","9":"9.999762e-01","_rn_":"59"},{"1":"evaluate - create","2":"pbl","3":"-0.132692957","4":"0.1403093","5":"Inf","6":"-0.604656910","7":"0.339270996","8":"-0.94571768","9":"9.345502e-01","_rn_":"60"}],"options":{"columns":{"min":{},"max":[10]},"rows":{"min":[10],"max":[10]},"pages":{}}}
+  </script>
+</div>
+</div>
+<div id="my-thoughts-1" class="section level2">
+<h2>My thoughts</h2>
+<p>Very analogous results again. <code>pbl</code> in particular <strong>definitely</strong> doesn’t look as pretty as our original output.</p>
+<p>But, I think we can interpret each of these significant pairwise comparisons in a much more statistically sound way, which will please reviewers.</p>
+</div>
 </div>
 
 
