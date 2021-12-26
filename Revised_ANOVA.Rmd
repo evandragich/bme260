@@ -17,8 +17,6 @@ knitr::opts_chunk$set(warning = FALSE,
 
 # Data Cleaning
 
-Check out the .Rmd file for full code (omitted here for brevity).
-
 ```{r load-packages-data, echo = FALSE}
 library(readxl) # tidy import of xlsx
 library(writexl) # write to xlsx file
@@ -129,20 +127,6 @@ kinetics <- rbind(kinetics_2019, kinetics_2020) %>%
   )
 ```
 
-# Motivation for a new statistical method
-
-My personal biggest concern with our methods, even before receiving reviewer comments, was the blatant violation of the [independence condition](https://statistics.laerd.com/spss-tutorials/multiple-regression-using-spss-statistics.php) for standard linear regression. I **knew** there was an alternative--something that could account for the repeated measures, or "nesting" of `blooms_level * task` within each student.
-
-During my search, I finally found it-- [a two-way repeated measures ANOVA](https://statistics.laerd.com/spss-tutorials/two-way-repeated-measures-anova-using-spss-statistics.php). This page has good vignettes for sample scenarios, which you can draw analogies to our data structure.
-
-I tried to find out how to implement it, and ran into [recent literature](https://www.r-bloggers.com/2018/04/how-to-do-repeated-measures-anovas-in-r/) eschewing ANOVA in favor of regression. This page also pointed me to the family of linear mixed models, which extend simple linear regression by allowing for random effects, in addtion to fixed.
-
-## Random Effects
-
-Random effects control for the repeated measures factor, by essentially allowing factors to vary along `student_id` without using up degrees of freedom to try to make sense of the results. In other words, `student_id` is a random effect in our case because we have to account for each student having a different, random intercept, before examining the global, fixed effects of `task` and `blooms_level`.
-
-The `(1 | year/student_id)` term in these models indicates that we have to account for the random, nuisance variance caused by each student and each year/cohort before examining the effects of `blooms_level`, `task`, and their interaction. Specifically, the `/` nesting operator means that we have a first random intercept to account for variance across years, and after accounting for this variance we introduce a random intercept to further account for that particular student's variance.
-
 # Mass Analysis
 
 ## Omnibus ANOVA
@@ -189,16 +173,6 @@ mass_bl_contrasts <- mass_emm_bl$contrasts %>%
   summary(infer = TRUE, level = 0.99)
 ```
 
-(Surprisingly, there don't exist any simple packages to transform this output into a neater table--I think we'd have to do it ourselves.)
-
-The first table is the estimated marginal means [(EMM)](https://www.theanalysisfactor.com/why-report-estimated-marginal-means-in-spss-glm/), which enhances bare-bones descriptive statistics by accounting for imbalances in data. This is huge, because our mass data has double the `pbl` observations of the other categories. This method also helps with the imbalance from missing data, but that is a trivial concern compared to the double-PBL issue.
-
-The second table output contains the pairwise contrasts between each level for a particular task, with the $\alpha$ = 0.05 p-value, associated 95% confidence interval, and Tukey family-wise adjustment.
-
-## My Thoughts
-
-This is messier than our previous output, but displays similar effects which lead to similar interpretations. It isn't nearly as parsimonious as "these 3 coefficients are negative, but PBL is the only positive one!" However, examine the `lec` contrasts and you can see ample comparisons which estimate `Remember` and `Understand` well below the higher levels, with significance. Conversely, these same comparisons have negative estimated effects for `pbl`, indicating a significant difference in the opposite direction. Middle Bloom's Levels are hazier to tease apart, as they were before, but you can see the clear stratification between `lec` `->` `hw/icp` `->` `pbl`, in my opinion.
-
 # Kinetics Analysis
 
 ## Omnibus ANOVA
@@ -241,12 +215,6 @@ kinetics_bl_means <- kinetics_emm_bl$emmeans %>%
 kinetics_bl_contrasts <- kinetics_emm_bl$contrasts %>%
   summary(infer = TRUE, level = 0.99)
 ```
-
-## My thoughts
-
-Very analogous results again. `pbl` in particular **definitely** doesn't look as pretty as our original output.
-
-But, I think we can interpret each of these significant pairwise comparisons in a much more statistically sound way, which will please reviewers.
 
 ## Write results to xlsx
 
