@@ -263,4 +263,8 @@ write_xlsx(list("Mass by Bloom's -  Mean Classes" = mass_bl_means,
             "clmm_anova_output.xlsx")
 ```
 
+```{r session-info}
+# information about this R session:
+sessionInfo()
+```
 
