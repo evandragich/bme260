@@ -141,17 +141,12 @@ summary(mass_clmm)
 
 Anova.clmm(mass_clmm)
 
-# null model to test significance of fixed effects
-mass_null <- clm(rating ~ 1, data = mass)
-anova(mass_clmm, mass_null)
-
 # null model to test significance of random effects
-mass_null2 <- clm(rating ~ blooms_level * task, data = mass)
-anova(mass_clmm, mass_null2)
+mass_null <- clm(rating ~ blooms_level * task, data = mass)
+anova(mass_clmm, mass_null)
 
 ```
 
-Great! Significant main effects for `task` and `blooms_level`, as well as their interaction. The next step is to break this down into pairwise comparisons. I chose to analyze pairs of `blooms_level` within each `task`; this is most analogous to our former method.
 
 ## Marginal Means and Contrasts
 
@@ -177,7 +172,6 @@ mass_bl_contrasts <- mass_emm_bl$contrasts %>%
 
 ## Omnibus ANOVA
 
-Here is the same procedure for kinetics. Starting with model fitting and the omnibus ANOVA:
 
 ```{r kinetics-lmm}
 kinetics <- kinetics %>%
@@ -189,12 +183,9 @@ summary(kinetics_clmm)
 Anova.clmm(kinetics_clmm)
 
 # null model to test significance of fixed effects
-kinetics_null <- clm(rating ~ 1, data = kinetics)
+kinetics_null <- clm(rating ~ blooms_level * task + year, data = kinetics)
 anova(kinetics_clmm, kinetics_null)
 
-# null model to test significance of random effects
-kinetics_null2 <- clm(rating ~ blooms_level * task + year, data = kinetics)
-anova(kinetics_clmm, kinetics_null2)
 ```
 
 ## Estimated Marginal Means and Contrasts
