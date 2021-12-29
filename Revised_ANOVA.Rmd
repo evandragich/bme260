@@ -155,17 +155,17 @@ anova(mass_clmm, mass_null)
 mass_emm_t <- emmeans(mass_clmm, specs = pairwise ~ blooms_level | task, mode = "mean.class")
 
 mass_task_means <- mass_emm_t$emmeans %>%
-  summary(infer = TRUE, null = mean(as.numeric(mass$rating), na.rm = TRUE), level = 0.99)
+  summary(infer = TRUE, null = mean(as.numeric(mass$rating), na.rm = TRUE), level = 0.95, adjust = "bonferroni")
 mass_task_contrasts <-mass_emm_t$contrasts %>%
-  summary(infer = TRUE, level = 0.99)
+  summary(infer = TRUE, level = 0.95, adjust = "bonferroni")
 
 # split by blooms level, then compares pairs of tasks
 mass_emm_bl <- emmeans(mass_clmm, specs = pairwise ~ task | blooms_level, mode = "mean.class")
 
 mass_bl_means <- mass_emm_bl$emmeans %>%
-  summary(infer = TRUE, null = mean(as.numeric(mass$rating), na.rm = TRUE), level = 0.99)
+  summary(infer = TRUE, null = mean(as.numeric(mass$rating), na.rm = TRUE), level = 0.95, adjust = "bonferroni")
 mass_bl_contrasts <- mass_emm_bl$contrasts %>%
-  summary(infer = TRUE, level = 0.99)
+  summary(infer = TRUE, level = 0.95, adjust = "bonferroni")
 ```
 
 # Kinetics Analysis
@@ -194,17 +194,17 @@ anova(kinetics_clmm, kinetics_null)
 kinetics_emm_t <- emmeans(kinetics_clmm, specs = pairwise ~ blooms_level | task, mode = "mean.class")
 
 kinetics_task_means <- kinetics_emm_t$emmeans %>%
-  summary(infer = TRUE, null = mean(as.numeric(kinetics$rating), na.rm = TRUE), level = 0.99)
+  summary(infer = TRUE, null = mean(as.numeric(kinetics$rating), na.rm = TRUE), level = 0.95, adjust = "bonferroni")
 kinetics_task_contrasts <-kinetics_emm_t$contrasts %>%
-  summary(infer = TRUE, level = 0.99)
+  summary(infer = TRUE, level = 0.95, adjust = "bonferroni")
 
 
 kinetics_emm_bl <- emmeans(kinetics_clmm, specs = pairwise ~ task | blooms_level, mode = "mean.class")
 
 kinetics_bl_means <- kinetics_emm_bl$emmeans %>%
-  summary(infer = TRUE, null = mean(as.numeric(kinetics$rating), na.rm = TRUE), level = 0.99)
+  summary(infer = TRUE, null = mean(as.numeric(kinetics$rating), na.rm = TRUE), level = 0.95, adjust = "bonferroni")
 kinetics_bl_contrasts <- kinetics_emm_bl$contrasts %>%
-  summary(infer = TRUE, level = 0.99)
+  summary(infer = TRUE, level = 0.95, adjust = "bonferroni")
 ```
 
 ## Write results to xlsx
